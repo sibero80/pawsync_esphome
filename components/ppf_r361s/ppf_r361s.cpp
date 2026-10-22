@@ -17,6 +17,9 @@ void PPFR361SComponent::setup() {
   // Indicate solid connected Wi-Fi state to coprocessor front LED
   this->set_wifi_led(2);
 
+  // Push active schedule to coprocessor EEPROM for autonomous offline execution
+  this->sync_schedules_to_coprocessor();
+
   // Request initial status report from coprocessor
   this->poll_status_();
 }
@@ -349,6 +352,7 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
       ESP_LOGI(TAG, "Autonomous scheduled meal fired by coprocessor!");
       if (this->status_text_sensor_ != nullptr)
         this->status_text_sensor_->publish_state("Scheduled Feed Running");
+      this->schedule_trigger_callback_.call();
       break;
     }
 
@@ -459,6 +463,9 @@ void PPFR361SComponent::sync_clock(uint32_t epoch_sec) {
     static_cast<uint8_t>((epoch_sec >> 24) & 0xFF)
   }});
   this->send_frame_(0x02, 0x14, OPCODE_CLOCK_SYNC, 0x00, items);
+
+  // Auto-sync active schedule to coprocessor following clock sync
+  this->sync_schedules_to_coprocessor();
 }
 
 // On-Device Schedule Engine (Matching Stock 7 Plans x 10 Meals Capability)
@@ -520,6 +527,7 @@ void PPFR361SComponent::set_active_plan(uint8_t plan_idx) {
   ESP_LOGI(TAG, "Switching active feeding plan to Plan %u", plan_idx + 1);
   this->storage_.active_plan_idx = plan_idx;
   this->save_schedule_to_nvs_();
+  this->sync_schedules_to_coprocessor();
 }
 
 void PPFR361SComponent::set_meal_schedule(uint8_t plan_idx, uint8_t meal_idx, bool enabled,
@@ -541,6 +549,39 @@ void PPFR361SComponent::set_meal_schedule(uint8_t plan_idx, uint8_t meal_idx, bo
   ESP_LOGI(TAG, "Configured Plan %u Meal %u: %s %02d:%02d (%d portions, days 0x%02X, sound %d)",
            plan_idx + 1, meal_idx + 1, enabled ? "ENABLED" : "DISABLED", hour, minute, portions, days, sound);
   this->save_schedule_to_nvs_();
+  if (plan_idx == this->storage_.active_plan_idx) {
+    this->sync_schedules_to_coprocessor();
+  }
+}
+
+void PPFR361SComponent::sync_schedules_to_coprocessor() {
+  uint8_t active_idx = this->storage_.active_plan_idx;
+  if (active_idx >= MAX_PLANS) active_idx = 0;
+  const auto &plan = this->storage_.plans[active_idx];
+
+  std::vector<uint8_t> meals_payload;
+  uint8_t count = 0;
+  for (uint8_t i = 0; i < MAX_MEALS_PER_PLAN; i++) {
+    if (plan.meals[i].enabled) {
+      meals_payload.push_back(i); // meal_idx (0..9)
+      meals_payload.push_back(1); // enabled
+      meals_payload.push_back(plan.meals[i].hour);
+      meals_payload.push_back(plan.meals[i].minute);
+      meals_payload.push_back(static_cast<uint8_t>(plan.meals[i].portions & 0xFF));
+      meals_payload.push_back(static_cast<uint8_t>((plan.meals[i].portions >> 8) & 0xFF));
+      meals_payload.push_back(plan.meals[i].days);
+      meals_payload.push_back(plan.meals[i].sound ? 1 : 0);
+      count++;
+    }
+  }
+
+  std::vector<std::pair<uint8_t, std::vector<uint8_t>>> items;
+  items.push_back({1, {active_idx}});
+  items.push_back({2, {count}});
+  items.push_back({3, meals_payload});
+
+  ESP_LOGI(TAG, "Syncing active plan %u (%u meal(s)) to coprocessor EEPROM via 0x55A6...", active_idx + 1, count);
+  this->send_frame_(0x02, 0x14, OPCODE_PLAN_SYNC, 0x00, items);
 }
 
 void PPFR361SComponent::set_intelligent_feeding(bool enabled) {

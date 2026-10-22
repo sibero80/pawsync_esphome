@@ -141,8 +141,14 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   float get_grams_per_portion() const { return this->storage_.grams_per_portion; }
   void clear_plan(uint8_t plan_idx);
   const ScheduleMeal &get_meal(uint8_t plan_idx, uint8_t meal_idx) const;
+  void sync_schedules_to_coprocessor();
+  void add_on_schedule_trigger_callback(std::function<void()> callback) {
+    this->schedule_trigger_callback_.add(std::move(callback));
+  }
 
  protected:
+  CallbackManager<void()> schedule_trigger_callback_{};
+
   // Serial frame handling
   void parse_rx_buffer_();
   bool process_frame_(const uint8_t *frame, size_t len);
@@ -346,6 +352,20 @@ template<typename... Ts> class PPFR361SSetActivePlanAction : public Action<Ts...
     uint8_t p = this->plan_.has_value() ? this->plan_.value(x...) : 1;
     if (p > 0) p -= 1;
     this->parent_->set_active_plan(p);
+  }
+};
+
+template<typename... Ts> class PPFR361SSyncSchedulesAction : public Action<Ts...>, public Parented<PPFR361SComponent> {
+ public:
+  void play(const Ts &...x) override {
+    this->parent_->sync_schedules_to_coprocessor();
+  }
+};
+
+class PPFR361SScheduleTrigger : public Trigger<> {
+ public:
+  explicit PPFR361SScheduleTrigger(PPFR361SComponent *parent) {
+    parent->add_on_schedule_trigger_callback([this]() { this->trigger(); });
   }
 };
 

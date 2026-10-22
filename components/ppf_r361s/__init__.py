@@ -13,12 +13,14 @@ ppf_r361s_ns = cg.esphome_ns.namespace("ppf_r361s")
 PPFR361SComponent = ppf_r361s_ns.class_("PPFR361SComponent", cg.Component, uart.UARTDevice)
 
 CONF_PPF_R361S_ID = "ppf_r361s_id"
+CONF_ON_SCHEDULE_TRIGGER = "on_schedule_trigger"
 
 CONFIG_SCHEMA = (
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(PPFR361SComponent),
             cv.Optional(CONF_TIME_ID): cv.use_id(time_.RealTimeClock),
+            cv.Optional(CONF_ON_SCHEDULE_TRIGGER): automation.validate_automation(single=True),
         }
     )
     .extend(uart.UART_DEVICE_SCHEMA)
@@ -43,6 +45,10 @@ async def to_code(config):
         time_comp = await cg.get_variable(config[CONF_TIME_ID])
         cg.add(var.set_time(time_comp))
 
+    for conf in config.get(CONF_ON_SCHEDULE_TRIGGER, []):
+        trigger = cg.new_Pvariable(conf[automation.CONF_TRIGGER_ID], var)
+        await automation.build_automation(trigger, [], conf)
+
 
 # Automation Actions
 CONF_PORTIONS = "portions"
@@ -55,9 +61,11 @@ CONF_HOUR = "hour"
 CONF_MINUTE = "minute"
 CONF_DAYS = "days"
 
+PPFR361SScheduleTrigger = ppf_r361s_ns.class_("PPFR361SScheduleTrigger", automation.Trigger.template())
 PPFR361SFeedAction = ppf_r361s_ns.class_("PPFR361SFeedAction", automation.Action)
 PPFR361STareAction = ppf_r361s_ns.class_("PPFR361STareAction", automation.Action)
 PPFR361SSyncClockAction = ppf_r361s_ns.class_("PPFR361SSyncClockAction", automation.Action)
+PPFR361SSyncSchedulesAction = ppf_r361s_ns.class_("PPFR361SSyncSchedulesAction", automation.Action)
 PPFR361SSetScheduleMealAction = ppf_r361s_ns.class_("PPFR361SSetScheduleMealAction", automation.Action)
 PPFR361SSetActivePlanAction = ppf_r361s_ns.class_("PPFR361SSetActivePlanAction", automation.Action)
 
@@ -172,3 +180,19 @@ async def set_active_plan_action_to_code(config, action_id, template_arg, args):
     tpl_plan = await cg.templatable(config[CONF_PLAN], args, cg.uint8)
     cg.add(var.set_plan(tpl_plan))
     return var
+
+
+SYNC_SCHEDULES_ACTION_SCHEMA = maybe_simple_id(
+    {
+        cv.GenerateID(): cv.use_id(PPFR361SComponent),
+    }
+)
+
+
+@automation.register_action("ppf_r361s.sync_schedules", PPFR361SSyncSchedulesAction, SYNC_SCHEDULES_ACTION_SCHEMA, synchronous=True)
+async def sync_schedules_action_to_code(config, action_id, template_arg, args):
+    paren = await cg.get_variable(config[CONF_ID])
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, paren)
+    return var
+
