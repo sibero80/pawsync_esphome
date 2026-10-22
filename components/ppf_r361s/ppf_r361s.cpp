@@ -36,9 +36,9 @@ void PPFR361SComponent::loop() {
     this->parse_rx_buffer_();
   }
 
-  // Periodic heartbeat / telemetry poll every 30 seconds
+  // Periodic heartbeat / telemetry poll
   uint32_t now_ms = millis();
-  if (now_ms - this->last_poll_time_ >= 30000) {
+  if (now_ms - this->last_poll_time_ >= this->poll_interval_ms_) {
     this->last_poll_time_ = now_ms;
     this->poll_status_();
   }
@@ -240,6 +240,21 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
         bool ac_power = (klv.at(7)[0] != 0);
         if (this->power_adapter_sensor_ != nullptr)
           this->power_adapter_sensor_->publish_state(ac_power);
+
+        // Power source transition handling
+        if (this->ac_power_ != ac_power) {
+          this->ac_power_ = ac_power;
+          if (!ac_power) {
+            ESP_LOGW(TAG, "DC power unplugged: Entering Battery Power-Save Mode (throttling poll to 2min, LEDs off)");
+            this->poll_interval_ms_ = 120000;
+            this->set_wifi_led(0);
+          } else {
+            ESP_LOGI(TAG, "DC power restored: Restoring normal operational profile");
+            this->poll_interval_ms_ = 30000;
+            this->set_wifi_led(2);
+            this->sync_clock();
+          }
+        }
       }
 
       // Key 8: bowlWeight (grams, int16 LE)

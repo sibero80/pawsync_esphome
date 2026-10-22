@@ -173,6 +173,8 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   std::vector<uint8_t> rx_buffer_;
   uint8_t tx_seq_{0};
   uint32_t last_poll_time_{0};
+  uint32_t poll_interval_ms_{30000};
+  bool ac_power_{true};
   uint32_t portions_today_{0};
   int last_scheduled_minute_{-1};
 
