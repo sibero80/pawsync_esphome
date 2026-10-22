@@ -90,7 +90,16 @@ Follow the step-by-step instructions in the [Flashing & Rollback Guide](docs/fla
 
 ## Technical Documentation
 
-Detailed reverse-engineering findings are located in `docs/findings/`:
+### Core Architectural Specifications & Comparison
+- [`docs/01_hardware_and_discovered_features.md`](docs/01_hardware_and_discovered_features.md): Master hardware specification, pinout, partition map, and discovered features.
+- [`docs/02_apk_feature_flow_and_protocol.md`](docs/02_apk_feature_flow_and_protocol.md): Companion app feature flows, cloud bypass schema, and UART packet structures.
+- [`docs/03_stock_to_esphome_parity_matrix.md`](docs/03_stock_to_esphome_parity_matrix.md): 100% stock-to-ESPHome parity matrix and dual-layer schedule design.
+- [`docs/04_home_assistant_integration_design.md`](docs/04_home_assistant_integration_design.md): Home Assistant entity definitions, Mushroom cards, and automation blueprints.
+- [`docs/findings_comparison.md`](docs/findings_comparison.md): Exhaustive comparison between prior preliminary findings and verified ground truth.
+- [`docs/validation_dossier.md`](docs/validation_dossier.md): Comprehensive validation sitemap, tool inventory, and verification runbooks.
+- [`docs/flashing_guide.md`](docs/flashing_guide.md): Solderless serial flashing and 100% rollback guarantee runbook.
+
+### Detailed Reverse-Engineering Findings (`docs/findings/`)
 - [`01_flash_layout.md`](docs/findings/01_flash_layout.md): Flash partition map, NVS namespaces, and extracted meal audio.
 - [`02_firmware_identity.md`](docs/findings/02_firmware_identity.md): Firmware version (v1.2.5), build timestamps, and SDK analysis.
 - [`03_gpio_map.md`](docs/findings/03_gpio_map.md): Proven GPIO and peripheral assignments.

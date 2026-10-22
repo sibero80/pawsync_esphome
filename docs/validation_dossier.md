@@ -29,6 +29,9 @@ This dossier compiles the authoritative engineering documentation reverse-engine
 | Document 4        | Home Assistant Integration Design Document & User Experience Specification   |
 |                   | Link: docs/04_home_assistant_integration_design.md                           |
 +-------------------+------------------------------------------------------------------------------+
+| Document 5        | Comprehensive Comparison: Prior Findings vs. Verified Ground Truth           |
+|                   | Link: docs/findings_comparison.md                                            |
++-------------------+------------------------------------------------------------------------------+
 ```
 
 ---
