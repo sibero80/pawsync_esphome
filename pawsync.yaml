@@ -1,0 +1,192 @@
+substitutions:
+  name: "pawsync-feeder"
+  friendly_name: "Pawsync PPF-R361S Feeder"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  comment: "Local ESPHome firmware for Pawsync PPF-R361S Pet Feeder with On-Device 7-Plan Scheduler"
+  min_version: 2024.6.0
+
+esp32:
+  board: esp32-c3-devkitm-1
+  variant: esp32c3
+  framework:
+    type: esp-idf
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+logger:
+  level: INFO
+  baud_rate: 0  # Disable logger UART to prevent interference with SC95F8766P link
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "Pawsync-Feeder-Fallback"
+    password: "fallbackpassword"
+
+captive_portal:
+
+time:
+  - platform: sntp
+    id: sntp_time
+    on_time_sync:
+      then:
+        - ppf_r361s.sync_clock:
+            id: feeder_bridge
+
+uart:
+  - id: uart_coprocessor
+    tx_pin: GPIO19
+    rx_pin: GPIO18
+    baud_rate: 115200
+
+i2s_audio:
+  - id: i2s_bus
+    i2s_lrclk_pin: GPIO1
+    i2s_bclk_pin: GPIO4
+
+speaker:
+  - platform: i2s_audio
+    id: feeder_speaker_out
+    i2s_audio_id: i2s_bus
+    dac_type: external
+    i2s_dout_pin: GPIO5
+    sample_rate: 32000
+    channel: mono
+
+media_player:
+  - platform: speaker
+    id: feeder_speaker
+    name: "Meal Call Speaker"
+    buffer_size: 16000
+    announcement_pipeline:
+      speaker: feeder_speaker_out
+    on_announcement:
+      - switch.turn_on: amp_enable
+    on_idle:
+      - switch.turn_off: amp_enable
+
+output:
+  - platform: gpio
+    pin: GPIO0
+    id: amp_enable_output
+
+switch:
+  - platform: output
+    id: amp_enable
+    name: "Amplifier Enable"
+    output: amp_enable_output
+    internal: true
+  - platform: ppf_r361s
+    child_lock:
+      name: "Child Lock"
+    slow_feed:
+      name: "Slow Feed Mode"
+    sleep_mode:
+      name: "Sleep Mode"
+    intelligent_feeding:
+      name: "Intelligent Feeding (Leftover Deduction)"
+
+ppf_r361s:
+  id: feeder_bridge
+  uart_id: uart_coprocessor
+  time_id: sntp_time
+
+sensor:
+  - platform: ppf_r361s
+    bowl_weight:
+      name: "Bowl Weight"
+    battery_level:
+      name: "Battery Level"
+    last_feed_weight:
+      name: "Last Feed Weight"
+    portions_today:
+      name: "Portions Today"
+
+binary_sensor:
+  - platform: ppf_r361s
+    power_adapter:
+      name: "AC Power Connected"
+    food_low:
+      name: "Food Level Low"
+    motor_jammed:
+      name: "Motor Jammed"
+    bowl_connected:
+      name: "Bowl Scale Connected"
+
+text_sensor:
+  - platform: ppf_r361s
+    status:
+      name: "Feeder Status"
+    next_meal:
+      name: "Next Scheduled Meal"
+    schedule_summary:
+      name: "Today's Schedule Summary"
+
+button:
+  - platform: ppf_r361s
+    tare:
+      name: "Tare Bowl Scale"
+    feed:
+      name: "Feed 1 Portion"
+      portions: 1
+      sound: true
+    calibrate_portion:
+      name: "Calibrate Kibble Density (Empty Bowl First)"
+
+number:
+  - platform: ppf_r361s
+    feed_portions:
+      name: "Manual Feed Portions"
+  - platform: template
+    name: "Grams per Portion (Kibble Calibration)"
+    id: kibble_grams_per_portion
+    min_value: 3.0
+    max_value: 20.0
+    step: 0.1
+    initial_value: 8.0
+    restore_value: true
+    unit_of_measurement: "g"
+    icon: "mdi:scale"
+    set_action:
+      - lambda: |-
+          id(feeder_bridge).set_grams_per_portion(x);
+
+# --- On-Device Schedule Interactive UI (Mapped to Plan 1 Meals 1-4) ---
+select:
+  - platform: template
+    name: "Active Feeding Plan"
+    id: select_active_plan
+    options:
+      - "Plan 1 (Daily)"
+      - "Plan 2 (Weekdays)"
+      - "Plan 3 (Weekends)"
+      - "Plan 4 (Custom 1)"
+      - "Plan 5 (Custom 2)"
+      - "Plan 6 (Custom 3)"
+      - "Plan 7 (Custom 4)"
+    initial_option: "Plan 1 (Daily)"
+    restore_value: true
+    set_action:
+      - lambda: |-
+          uint8_t p = 1;
+          if (x == "Plan 2 (Weekdays)") p = 2;
+          else if (x == "Plan 3 (Weekends)") p = 3;
+          else if (x == "Plan 4 (Custom 1)") p = 4;
+          else if (x == "Plan 5 (Custom 2)") p = 5;
+          else if (x == "Plan 6 (Custom 3)") p = 6;
+          else if (x == "Plan 7 (Custom 4)") p = 7;
+          id(feeder_bridge).set_active_plan(p - 1);

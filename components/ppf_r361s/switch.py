@@ -1,0 +1,59 @@
+import esphome.codegen as cg
+from esphome.components import switch as switch_
+import esphome.config_validation as cv
+
+from . import CONF_PPF_R361S_ID, PPFR361SComponent, ppf_r361s_ns
+
+DEPENDENCIES = ["ppf_r361s"]
+
+CONF_CHILD_LOCK = "child_lock"
+CONF_SLOW_FEED = "slow_feed"
+CONF_SLEEP_MODE = "sleep_mode"
+CONF_INTELLIGENT_FEEDING = "intelligent_feeding"
+
+PPFR361SChildLockSwitch = ppf_r361s_ns.class_("PPFR361SChildLockSwitch", switch_.Switch)
+PPFR361SSlowFeedSwitch = ppf_r361s_ns.class_("PPFR361SSlowFeedSwitch", switch_.Switch)
+PPFR361SSleepModeSwitch = ppf_r361s_ns.class_("PPFR361SSleepModeSwitch", switch_.Switch)
+PPFR361SIntelligentFeedingSwitch = ppf_r361s_ns.class_("PPFR361SIntelligentFeedingSwitch", switch_.Switch)
+
+CONFIG_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(CONF_PPF_R361S_ID): cv.use_id(PPFR361SComponent),
+        cv.Optional(CONF_CHILD_LOCK): switch_.switch_schema(
+            PPFR361SChildLockSwitch,
+            icon="mdi:lock",
+        ),
+        cv.Optional(CONF_SLOW_FEED): switch_.switch_schema(
+            PPFR361SSlowFeedSwitch,
+            icon="mdi:speedometer-slow",
+        ),
+        cv.Optional(CONF_SLEEP_MODE): switch_.switch_schema(
+            PPFR361SSleepModeSwitch,
+            icon="mdi:power-sleep",
+        ),
+        cv.Optional(CONF_INTELLIGENT_FEEDING): switch_.switch_schema(
+            PPFR361SIntelligentFeedingSwitch,
+            icon="mdi:scale-balance",
+        ),
+    }
+)
+
+
+async def to_code(config):
+    hub = await cg.get_variable(config[CONF_PPF_R361S_ID])
+    if child_lock_config := config.get(CONF_CHILD_LOCK):
+        sw = await switch_.new_switch(child_lock_config)
+        await cg.register_parented(sw, hub)
+        cg.add(hub.set_child_lock_switch(sw))
+    if slow_feed_config := config.get(CONF_SLOW_FEED):
+        sw = await switch_.new_switch(slow_feed_config)
+        await cg.register_parented(sw, hub)
+        cg.add(hub.set_slow_feed_switch(sw))
+    if sleep_mode_config := config.get(CONF_SLEEP_MODE):
+        sw = await switch_.new_switch(sleep_mode_config)
+        await cg.register_parented(sw, hub)
+        cg.add(hub.set_sleep_mode_switch(sw))
+    if intelligent_feeding_config := config.get(CONF_INTELLIGENT_FEEDING):
+        sw = await switch_.new_switch(intelligent_feeding_config)
+        await cg.register_parented(sw, hub)
+        cg.add(hub.set_intelligent_feeding_switch(sw))
