@@ -155,6 +155,35 @@ def build_clock_sync_cmd(timestamp: int, seq: int = 1) -> bytes:
     return encode_frame(frame_type=0x02, seq=seq, sub_cmd=0x14, opcode=OPCODE_CLOCK_SYNC,
                         klv_items=[(1, struct.pack('<I', timestamp))])
 
+def build_plan_sync_cmd(plan_idx: int, meals: List[Dict[str, Any]], seq: int = 1) -> bytes:
+    """Builds feeding plan sync command (Opcode 0x55A6) for coprocessor EEPROM storage."""
+    meals_payload = bytearray()
+    count = 0
+    for idx, meal in enumerate(meals):
+        if meal.get("enabled", True):
+            meal_idx = meal.get("meal_idx", idx)
+            hour = meal.get("hour", 8)
+            minute = meal.get("minute", 0)
+            portions = meal.get("portions", 1)
+            repeat_days = meal.get("days", 0x7F)
+            sound = 1 if meal.get("sound", True) else 0
+            meals_payload.extend(struct.pack('<BBBBHBB', meal_idx, 1, hour, minute, portions, repeat_days, sound))
+            count += 1
+    items = [
+        (1, bytes([plan_idx & 0xFF])),
+        (2, bytes([count & 0xFF])),
+        (3, bytes(meals_payload))
+    ]
+    return encode_frame(frame_type=0x02, seq=seq, sub_cmd=0x14, opcode=OPCODE_PLAN_SYNC, klv_items=items)
+
+def build_schedule_trigger_report(clk_sec: int, output_type: int = 2, seq: int = 1) -> bytes:
+    """Builds autonomous schedule trigger report from coprocessor (Opcode 0x5598)."""
+    items = [
+        (1, struct.pack('<I', clk_sec)),
+        (2, bytes([output_type & 0xFF]))
+    ]
+    return encode_frame(frame_type=0x02, seq=seq, sub_cmd=0x14, opcode=OPCODE_SCHEDULE_TRIGGER, klv_items=items)
+
 def run_unit_tests():
     print("Running VeSync UART Protocol Unit Tests & Vector Validation...")
 
@@ -210,6 +239,32 @@ def run_unit_tests():
     ts = struct.unpack('<I', decoded_clock["klv"][1])[0]
     assert ts == 1741187120
     print("  [PASS] Test 4: Clock sync timestamp verified.")
+
+    # Test 5: Plan Sync Serialization (Opcode 0x55A6)
+    test_meals = [
+        {"meal_idx": 0, "enabled": True, "hour": 8, "minute": 30, "portions": 2, "days": 0x7F, "sound": True},
+        {"meal_idx": 1, "enabled": True, "hour": 18, "minute": 0, "portions": 3, "days": 0x7F, "sound": True}
+    ]
+    plan_frame = build_plan_sync_cmd(plan_idx=0, meals=test_meals, seq=6)
+    assert (sum(plan_frame) & 0xFF) == 0xFF
+    decoded_plan = decode_frame(plan_frame)
+    assert decoded_plan["opcode"] == OPCODE_PLAN_SYNC
+    assert decoded_plan["klv"][1][0] == 0  # Plan 0
+    assert decoded_plan["klv"][2][0] == 2  # 2 meals
+    meal_data = decoded_plan["klv"][3]
+    assert len(meal_data) == 16 # 2 meals * 8 bytes
+    m0_idx, m0_en, m0_h, m0_m, m0_port, m0_days, m0_snd = struct.unpack('<BBBBHBB', meal_data[0:8])
+    assert m0_idx == 0 and m0_h == 8 and m0_m == 30 and m0_port == 2
+    print("  [PASS] Test 5: Plan sync serialization (0x55A6) verified with 8-byte meal records.")
+
+    # Test 6: Autonomous Schedule Trigger (Opcode 0x5598)
+    trigger_frame = build_schedule_trigger_report(clk_sec=1741187120, output_type=2, seq=7)
+    assert (sum(trigger_frame) & 0xFF) == 0xFF
+    decoded_trigger = decode_frame(trigger_frame)
+    assert decoded_trigger["opcode"] == OPCODE_SCHEDULE_TRIGGER
+    assert struct.unpack('<I', decoded_trigger["klv"][1])[0] == 1741187120
+    assert decoded_trigger["klv"][2][0] == 2
+    print("  [PASS] Test 6: Schedule trigger event (0x5598) verified.")
 
     print("\nALL UNIT TESTS PASSED (100% SPEC COMPLIANCE).")
 
