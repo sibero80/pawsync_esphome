@@ -96,6 +96,7 @@ Follow the step-by-step instructions in the [Flashing & Rollback Guide](docs/fla
 - [`docs/03_stock_to_esphome_parity_matrix.md`](docs/03_stock_to_esphome_parity_matrix.md): 100% stock-to-ESPHome parity matrix and dual-layer schedule design.
 - [`docs/04_home_assistant_integration_design.md`](docs/04_home_assistant_integration_design.md): Home Assistant entity definitions, Mushroom cards, and automation blueprints.
 - [`docs/05_software_ota_replication_and_hardening.md`](docs/05_software_ota_replication_and_hardening.md): 100% wireless OTA installation runbook, gap analysis, and zero-soldering software rollback.
+- [`docs/peer_review_ota_analysis_and_remediation_guide.md`](docs/peer_review_ota_analysis_and_remediation_guide.md): Exhaustive peer review dossier, gap remediation, and complete drop-in reference tooling for partner agents.
 - [`docs/findings_comparison.md`](docs/findings_comparison.md): Exhaustive comparison between prior preliminary findings and verified ground truth.
 - [`docs/validation_dossier.md`](docs/validation_dossier.md): Comprehensive validation sitemap, tool inventory, and verification runbooks.
 - [`docs/flashing_guide.md`](docs/flashing_guide.md): Solderless serial flashing and 100% rollback guarantee runbook.

@@ -35,6 +35,9 @@ This dossier compiles the authoritative engineering documentation reverse-engine
 | Document 6        | Technical Replication & Hardening Dossier: Software-Only OTA Installation    |
 |                   | Link: docs/05_software_ota_replication_and_hardening.md                      |
 +-------------------+------------------------------------------------------------------------------+
+| Document 7        | Peer Review Dossier: Technical Analysis, Gap Remediation & Hardening Guide   |
+|                   | Link: docs/peer_review_ota_analysis_and_remediation_guide.md                |
++-------------------+------------------------------------------------------------------------------+
 ```
 
 ---
