@@ -146,6 +146,14 @@ button:
       sound: true
     calibrate_portion:
       name: "Calibrate Kibble Density (Empty Bowl First)"
+  - platform: template
+    name: "Rollback to Factory Firmware (Slot ota_1)"
+    id: btn_rollback_stock
+    icon: mdi:backup-restore
+    entity_category: config
+    on_press:
+      - lambda: |-
+          id(feeder_bridge).rollback_to_stock_firmware();
 
 number:
   - platform: ppf_r361s

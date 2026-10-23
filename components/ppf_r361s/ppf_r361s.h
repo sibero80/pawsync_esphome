@@ -130,6 +130,9 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   // Automated Kibble Calibration Wizard
   void start_portion_calibration(uint16_t portions = 3);
 
+  // Dual-Boot Wireless Rollback
+  void rollback_to_stock_firmware();
+
   // Schedule Engine APIs (Up to 7 Plans, 10 Meals per Plan)
   void set_active_plan(uint8_t plan_idx);
   uint8_t get_active_plan() const { return this->storage_.active_plan_idx; }

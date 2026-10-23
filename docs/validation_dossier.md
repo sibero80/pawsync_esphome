@@ -32,6 +32,9 @@ This dossier compiles the authoritative engineering documentation reverse-engine
 | Document 5        | Comprehensive Comparison: Prior Findings vs. Verified Ground Truth           |
 |                   | Link: docs/findings_comparison.md                                            |
 +-------------------+------------------------------------------------------------------------------+
+| Document 6        | Technical Replication & Hardening Dossier: Software-Only OTA Installation    |
+|                   | Link: docs/05_software_ota_replication_and_hardening.md                      |
++-------------------+------------------------------------------------------------------------------+
 ```
 
 ---

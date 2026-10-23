@@ -2,6 +2,12 @@
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
 
+#if defined(USE_ESP_IDF)
+#include "esp_ota_ops.h"
+#include "esp_partition.h"
+#include "esp_system.h"
+#endif
+
 namespace esphome {
 namespace ppf_r361s {
 
@@ -729,6 +735,27 @@ void PPFR361SComponent::update_schedule_sensors_() {
       this->next_meal_sensor_->publish_state("Done for today");
     }
   }
+}
+
+void PPFR361SComponent::rollback_to_stock_firmware() {
+  ESP_LOGW(TAG, "Initiating software rollback to stock firmware partition 'ota_1'...");
+#if defined(USE_ESP_IDF)
+  const esp_partition_t *ota1 = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, "ota_1");
+  if (ota1 != nullptr) {
+    esp_err_t err = esp_ota_set_boot_partition(ota1);
+    if (err == ESP_OK) {
+      ESP_LOGW(TAG, "Boot partition set to 'ota_1' successfully! Rebooting into stock factory firmware...");
+      delay(100);
+      esp_restart();
+    } else {
+      ESP_LOGE(TAG, "Failed to set boot partition to 'ota_1': 0x%x", err);
+    }
+  } else {
+    ESP_LOGE(TAG, "Partition 'ota_1' not found in partition table!");
+  }
+#else
+  ESP_LOGE(TAG, "Rollback to stock firmware is only supported under ESP-IDF framework.");
+#endif
 }
 
 }  // namespace ppf_r361s

@@ -95,6 +95,7 @@ Follow the step-by-step instructions in the [Flashing & Rollback Guide](docs/fla
 - [`docs/02_apk_feature_flow_and_protocol.md`](docs/02_apk_feature_flow_and_protocol.md): Companion app feature flows, cloud bypass schema, and UART packet structures.
 - [`docs/03_stock_to_esphome_parity_matrix.md`](docs/03_stock_to_esphome_parity_matrix.md): 100% stock-to-ESPHome parity matrix and dual-layer schedule design.
 - [`docs/04_home_assistant_integration_design.md`](docs/04_home_assistant_integration_design.md): Home Assistant entity definitions, Mushroom cards, and automation blueprints.
+- [`docs/05_software_ota_replication_and_hardening.md`](docs/05_software_ota_replication_and_hardening.md): 100% wireless OTA installation runbook, gap analysis, and zero-soldering software rollback.
 - [`docs/findings_comparison.md`](docs/findings_comparison.md): Exhaustive comparison between prior preliminary findings and verified ground truth.
 - [`docs/validation_dossier.md`](docs/validation_dossier.md): Comprehensive validation sitemap, tool inventory, and verification runbooks.
 - [`docs/flashing_guide.md`](docs/flashing_guide.md): Solderless serial flashing and 100% rollback guarantee runbook.
@@ -108,6 +109,9 @@ Follow the step-by-step instructions in the [Flashing & Rollback Guide](docs/fla
 - [`06_audio.md`](docs/findings/06_audio.md): NS4168 audio amplifier integration and I2S configuration.
 - [`07_power_battery_schedule.md`](docs/findings/07_power_battery_schedule.md): Battery power lifecycle and autonomous offline schedule handling.
 - [`tools/proto/vesync_proto.py`](tools/proto/vesync_proto.py): Standalone reference Python protocol encoder/decoder with unit tests.
+- [`tools/ota/build_vesync_ota.py`](tools/ota/build_vesync_ota.py): Hardened VeSync OTA package generator with strict 1.25 MB partition size enforcement.
+- [`tools/ota/trigger_ota.py`](tools/ota/trigger_ota.py): Dual-vector staging & trigger runner (Port 55555 probe + Cloud Bypass injection + local HTTP staging).
+- [`tests/test_ota_pipeline.py`](tests/test_ota_pipeline.py): Automated test suite for OTA packaging, crypto roundtrips, and HTTP transfer.
 
 ---
 
