@@ -37,6 +37,7 @@ from tools.ota.build_vesync_ota import (
 from tools.ota.trigger_ota import (
     build_up_firmware_payload,
     build_set_developer_payload,
+    build_cloud_bypass_payload,
     probe_developer_port,
     OTAFileHandler,
     HTTPServer
@@ -160,9 +161,62 @@ def test_command_payload_schemas():
     print("    [PASS] Test 4: JSON schemas match decompiled stock firmware handlers.")
 
 
+def test_cloud_bypass_payload_and_headers():
+    """Verify VeSync Cloud Bypass V2 request body and HTTP headers matching APK specifications."""
+    print("[*] Running Test 5: VeSync Cloud Bypass V2 schema and gateway headers...")
+    command_data = {
+        "pluginName": "mainFw",
+        "url": "http://192.168.1.100:8000/firmware.bin",
+        "newVersion": "9.9.9",
+        "upMode": 2
+    }
+    endpoint, body, headers = build_cloud_bypass_payload(
+        account_id="ACC_12345",
+        token="TOK_ABCDE",
+        cid="DEV_FEEDER_001",
+        method="upFirmware",
+        command_data=command_data
+    )
+
+    # 1. Endpoint Check
+    assert endpoint.endswith("/pet/api/deviceManaged/v1/bypassV2"), f"Invalid endpoint: {endpoint}"
+
+    # 2. HTTP Gateway Headers Check
+    assert headers["accountID"] == "ACC_12345", "Missing accountID header"
+    assert headers["token"] == "TOK_ABCDE", "Missing token header"
+    assert headers["bizType"] == "pet", f"Invalid bizType header: {headers.get('bizType')}"
+    assert "traceId" in headers, "Missing traceId header"
+    assert "application/json" in headers["Content-Type"], "Invalid Content-Type header"
+    assert "Pawsync" in headers["User-Agent"], "Invalid User-Agent header"
+
+    # 3. Context Payload Check
+    ctx = body["context"]
+    assert ctx["accountID"] == "ACC_12345"
+    assert ctx["token"] == "TOK_ABCDE"
+    assert ctx["bizType"] == "pet", f"Invalid context.bizType: {ctx.get('bizType')}"
+    assert ctx["userType"] == "1", f"Invalid context.userType: {ctx.get('userType')}"
+    assert ctx["countryCode"] == "US"
+    assert "method" not in ctx, "'method' must NOT be placed inside context!"
+    assert "cid" not in ctx, "'cid' must NOT be placed inside context!"
+
+    # 4. Device Command Envelope Check
+    envelope = body["data"]
+    assert envelope["method"] == "upFirmware"
+    assert envelope["source"] == "APP"
+    device_data = envelope["data"]
+    assert device_data["cid"] == "DEV_FEEDER_001"
+    assert device_data["configModule"] == DEFAULT_MODEL
+    assert device_data["pluginName"] == "mainFw"
+    assert device_data["url"] == "http://192.168.1.100:8000/firmware.bin"
+    assert device_data["newVersion"] == "9.9.9"
+    assert device_data["upMode"] == 2
+
+    print("    [PASS] Test 5: Cloud Bypass V2 schema, gateway headers, and nested device envelope verified.")
+
+
 def test_http_staging_server():
     """Verify local HTTP staging server serving file with exact byte length."""
-    print("[*] Running Test 5: Local HTTP staging server transfer simulation...")
+    print("[*] Running Test 6: Local HTTP staging server transfer simulation...")
     test_data = b"OTA_TEST_PACKAGE_DATA_" * 1024  # 22.5 KB
     temp_dir = tempfile.mkdtemp()
     test_file_path = os.path.join(temp_dir, "test_ota.bin")
@@ -186,7 +240,7 @@ def test_http_staging_server():
                 downloaded = resp.read()
                 assert len(downloaded) == len(test_data), f"Length mismatch: {len(downloaded)} != {len(test_data)}"
                 assert downloaded == test_data, "Downloaded data corrupted"
-            print("    [PASS] Test 5: HTTP staging server delivered exact payload.")
+            print("    [PASS] Test 6: HTTP staging server delivered exact payload.")
         finally:
             os.chdir(old_cwd)
     finally:
@@ -199,7 +253,7 @@ def test_http_staging_server():
 
 def test_production_binary_package():
     """Verify packaging the actual compiled ESPHome binary in pawsync_oma2."""
-    print("[*] Running Test 6: Production ESPHome binary packaging & verification...")
+    print("[*] Running Test 7: Production ESPHome binary packaging & verification...")
     prod_bin = "/root/pawsync_oma2/.esphome/build/pawsync-feeder/build/firmware.ota.bin"
     if not os.path.exists(prod_bin):
         print("    [SKIP] Production binary firmware.ota.bin not found (compile needed first).")
@@ -241,9 +295,10 @@ if __name__ == "__main__":
     test_hard_partition_size_guardrail()
     test_image_magic_byte_validation()
     test_command_payload_schemas()
+    test_cloud_bypass_payload_and_headers()
     test_http_staging_server()
     test_production_binary_package()
 
     print("=" * 70)
-    print("ALL 6 OTA PIPELINE TESTS PASSED CLEANLY (100% SUCCESS)!")
+    print("ALL 7 OTA PIPELINE TESTS PASSED CLEANLY (100% SUCCESS)!")
     print("=" * 70)

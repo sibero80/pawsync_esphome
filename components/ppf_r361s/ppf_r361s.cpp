@@ -740,12 +740,18 @@ void PPFR361SComponent::update_schedule_sensors_() {
 void PPFR361SComponent::rollback_to_stock_firmware() {
   ESP_LOGW(TAG, "Initiating software rollback to stock firmware partition 'ota_1'...");
 #if defined(USE_ESP_IDF)
+  const esp_partition_t *running = esp_ota_get_running_partition();
+  if (running != nullptr && strcmp(running->label, "ota_1") == 0) {
+    ESP_LOGE(TAG, "Rollback aborted: Feeder is ALREADY running on factory partition 'ota_1'!");
+    return;
+  }
+
   const esp_partition_t *ota1 = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, "ota_1");
   if (ota1 != nullptr) {
     esp_err_t err = esp_ota_set_boot_partition(ota1);
     if (err == ESP_OK) {
-      ESP_LOGW(TAG, "Boot partition set to 'ota_1' successfully! Rebooting into stock factory firmware...");
-      delay(100);
+      ESP_LOGW(TAG, "Boot partition set to 'ota_1' successfully! Rebooting into stock factory firmware in 2 seconds...");
+      delay(2000);
       esp_restart();
     } else {
       ESP_LOGE(TAG, "Failed to set boot partition to 'ota_1': 0x%x", err);

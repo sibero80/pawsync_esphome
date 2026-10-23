@@ -38,6 +38,9 @@ This dossier compiles the authoritative engineering documentation reverse-engine
 | Document 7        | Peer Review Dossier: Technical Analysis, Gap Remediation & Hardening Guide   |
 |                   | Link: docs/peer_review_ota_analysis_and_remediation_guide.md                |
 +-------------------+------------------------------------------------------------------------------+
+| Document 8        | OpenWrt Router Operations & Mobile Hotspot Wireless Deployment Guide         |
+|                   | Link: docs/06_openwrt_and_hotspot_deployment_guide.md                        |
++-------------------+------------------------------------------------------------------------------+
 ```
 
 ---

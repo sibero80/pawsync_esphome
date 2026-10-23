@@ -99,6 +99,16 @@ switch:
       name: "Sleep Mode"
     intelligent_feeding:
       name: "Intelligent Feeding (Leftover Deduction)"
+  - platform: template
+    name: "Unlock Factory Firmware Rollback"
+    id: sw_unlock_factory_rollback
+    icon: mdi:lock-alert
+    entity_category: config
+    optimistic: true
+    turn_on_action:
+      - logger.log: "WARNING: Factory firmware rollback interlock has been UNLOCKED!"
+    turn_off_action:
+      - logger.log: "Factory firmware rollback interlock is LOCKED."
 
 ppf_r361s:
   id: feeder_bridge
@@ -152,8 +162,13 @@ button:
     icon: mdi:backup-restore
     entity_category: config
     on_press:
-      - lambda: |-
-          id(feeder_bridge).rollback_to_stock_firmware();
+      - then:
+          - lambda: !lambda |-
+              if (!id(sw_unlock_factory_rollback).state) {
+                ESP_LOGW("rollback", "Rollback rejected: 'Unlock Factory Firmware Rollback' switch is OFF. Turn ON the unlock switch first.");
+                return;
+              }
+              id(feeder_bridge).rollback_to_stock_firmware();
 
 number:
   - platform: ppf_r361s

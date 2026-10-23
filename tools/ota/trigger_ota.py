@@ -114,34 +114,64 @@ def build_set_developer_payload(enabled: bool = True) -> dict:
     }
 
 
-def send_cloud_bypass(account_id: str, token: str, cid: str, payload_method: str, payload_data: dict) -> dict:
-    """Dispatch bypass payload via VeSync smartapi bypassV2 endpoint."""
+def build_cloud_bypass_payload(account_id: str, token: str, cid: str, method: str, command_data: dict, model: str = DEFAULT_MODEL) -> tuple:
+    """
+    Construct VeSync Cloud Bypass V2 request body and HTTP headers matching Android APK models:
+      - Context: session tokens, bizType: "pet", userType: "1", appVersion: "1.1.32"
+      - Data Envelope: {"method": method, "source": "APP", "data": {"cid": cid, "configModule": model, ...command_data}}
+      - Headers: accountID, token, bizType, traceId
+    """
     trace_id = str(int(time.time() * 1000))
     endpoint = f"{VESYNC_API_BASE}/pet/api/deviceManaged/v1/bypassV2"
 
     body = {
         "context": {
+            "traceId": trace_id,
             "accountID": account_id,
             "token": token,
-            "traceId": trace_id,
-            "method": payload_method,
-            "cid": cid,
-            "bizType": "petFeeder"
+            "userType": "1",
+            "bizType": "pet",
+            "countryCode": "US",
+            "language": "en",
+            "timeZone": "America/New_York",
+            "appVersion": "1.1.32"
         },
-        "data": payload_data
+        "data": {
+            "method": method,
+            "source": "APP",
+            "data": {
+                "cid": cid,
+                "configModule": model,
+                **command_data
+            }
+        }
     }
+
+    headers = {
+        "Content-Type": "application/json; charset=UTF-8",
+        "User-Agent": "Pawsync/1.1.32 (Android 14; Build/46)",
+        "accountID": account_id,
+        "token": token,
+        "bizType": "pet",
+        "traceId": trace_id
+    }
+
+    return endpoint, body, headers
+
+
+def send_cloud_bypass(account_id: str, token: str, cid: str, method: str, command_data: dict, model: str = DEFAULT_MODEL) -> dict:
+    """Dispatch bypass payload via VeSync smartapi bypassV2 endpoint."""
+    endpoint, body, headers = build_cloud_bypass_payload(account_id, token, cid, method, command_data, model)
 
     req = request.Request(
         endpoint,
         data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": "Pawsync/1.1.32 (Android 14; Build/46)"
-        },
+        headers=headers,
         method="POST"
     )
 
     print(f"[*] Posting to Cloud Bypass endpoint: {endpoint}")
+    print(f"    Headers: {json.dumps(headers, indent=2)}")
     print(f"    Payload: {json.dumps(body, indent=2)}")
 
     try:
@@ -160,7 +190,7 @@ def send_cloud_bypass(account_id: str, token: str, cid: str, payload_method: str
 
 
 def start_http_server(directory: str, port: int = DEFAULT_HTTP_PORT):
-    """Run non-blocking local HTTP staging server."""
+    """Run foreground HTTP staging server. Press Ctrl+C to terminate."""
     os.chdir(directory)
     server = HTTPServer(("0.0.0.0", port), OTAFileHandler)
     local_ip = get_local_ip()

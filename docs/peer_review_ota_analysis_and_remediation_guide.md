@@ -42,9 +42,11 @@ This guide contains all technical specifications, decompilation traces, cryptogr
 |                                   |                                   | ESP-IDF framework settings.       |
 | 6. Rollback & Recovery Strategy   | Hardware pogo-pin flashing only   | MAJOR INNOVATION: Stock firmware  |
 |                                   | (physical chassis disassembly,    | remains untouched in ota_1; added |
-|                                   | soldering/pogo-pins, esptool).    | native Home Assistant rollback.   |
-| 7. Tooling & Script Robustness    | Python scripts contained CLI      | Clean, type-safe, multi-threaded  |
-|                                   | parsing typos (args.feeder-ip).   | tooling with 6/6 automated tests. |
+|                                   | soldering/pogo-pins, esptool).    | native HA rollback with interlock.|
+| 7. Cloud Bypass Schema & Headers  | Flattened data envelope; missing  | RECONCILED: Full APK compliance   |
+|                                   | gateway headers (accountID/token).| (bizType: pet, headers & wrapper).|
+| 8. Tooling & Script Robustness    | Valid CLI handling in argparse    | Hardened, type-safe tooling with  |
+|                                   | (retracted prior typo claim).     | 7/7 automated unit & mock tests.  |
 +-----------------------------------+-----------------------------------+-----------------------------------+
 ```
 
@@ -471,12 +473,14 @@ PAWSYNC PPF-R361S OTA PIPELINE VERIFICATION SUITE
     [PASS] Test 3: Non-ESP binary correctly rejected.
 [*] Running Test 4: upFirmware & setDeveloper command schemas...
     [PASS] Test 4: JSON schemas match decompiled stock firmware handlers.
-[*] Running Test 5: Local HTTP staging server transfer simulation...
-    [PASS] Test 5: HTTP staging server delivered exact payload.
-[*] Running Test 6: Production ESPHome binary packaging & verification...
-    [PASS] Test 6: Production package 'pawsync_ota_update.bin' verified (1,139,057 bytes).
+[*] Running Test 5: VeSync Cloud Bypass V2 schema and gateway headers...
+    [PASS] Test 5: Cloud Bypass V2 schema, gateway headers, and nested device envelope verified.
+[*] Running Test 6: Local HTTP staging server transfer simulation...
+    [PASS] Test 6: HTTP staging server delivered exact payload.
+[*] Running Test 7: Production ESPHome binary packaging & verification...
+    [PASS] Test 7: Production package 'pawsync_ota_update.bin' verified (1,139,057 bytes).
 ======================================================================
-ALL 6 OTA PIPELINE TESTS PASSED CLEANLY (100% SUCCESS)!
+ALL 7 OTA PIPELINE TESTS PASSED CLEANLY (100% SUCCESS)!
 ======================================================================
 ```
 
@@ -484,19 +488,22 @@ ALL 6 OTA PIPELINE TESTS PASSED CLEANLY (100% SUCCESS)!
 
 ## 6. Actionable Remediation Checklist for the Other Agent
 
-To upgrade your implementation to this verified standard, execute these 5 concrete steps:
+To upgrade your implementation to this verified standard, execute these concrete steps:
 
 1. [ ] **Harden `build_vesync_ota.py`**:
    - Add `bin_data[0] == 0xE9` validation to reject non-ESP32 binaries.
    - Add `len(bin_data) <= 1310720` hard assertion to prevent partition overflow into `usercfg`.
    - Add automated decryption self-check before saving to disk.
 2. [ ] **Harden `trigger_ota.py`**:
-   - Fix CLI argument parsing typo on line 188 (`args.feeder-ip` $\rightarrow$ `args.feeder_ip`).
-   - Implement Cloud `bypassV2` REST client as the primary fallback when port 55555 probe fails.
+   - Implement VeSync Cloud Bypass V2 request body with `bizType: "pet"`, outer device wrapper `{"method": "upFirmware", "source": "APP", "data": {...}}`.
+   - Pass mandatory HTTP gateway headers (`accountID`, `token`, `bizType`, `traceId`).
+   - Treat developer port 55555 as optional shortcut, falling back to Cloud Bypass when port 55555 is closed.
 3. [ ] **Enable Bootloader Rollback Cancellation in `pawsync.yaml`**:
    - Under `esp32.framework.advanced`, ensure `enable_ota_rollback: true` is set.
-4. [ ] **Implement Zero-Soldering Dual-Boot Software Rollback**:
-   - Add `rollback_to_stock_firmware()` to your C++ component using `esp_ota_set_boot_partition(ota_1)`.
-   - Expose the template button `btn_rollback_stock` in `pawsync.yaml`.
-5. [ ] **Synchronize Documentation**:
-   - Update `docs/ota_replication_and_technical_analysis.md` to document the 1,310,720-byte hard limit, the 171 KB margin, port 55555 dormancy, and the zero-soldering rollback procedure.
+4. [ ] **Implement Zero-Soldering Dual-Boot Software Rollback with Safety Interlock**:
+   - Add `rollback_to_stock_firmware()` to your C++ component using `esp_ota_set_boot_partition(ota_1)` with an `esp_ota_get_running_partition()` check.
+   - Expose the template button `btn_rollback_stock` in `pawsync.yaml` protected by an `Unlock Factory Firmware Rollback` boolean switch.
+5. [ ] **Incorporate OpenWrt Operations Guide**:
+   - Adopt the OpenWrt router staging and packet inspection runbook from `docs/06_openwrt_and_hotspot_deployment_guide.md`.
+6. [ ] **Retract Disproven Typo Claim**:
+   - We confirm that your script's use of `--feeder-ip` was correctly parsed by `argparse` as `args.feeder_ip`. Our prior claim regarding this line has been formally retracted.
