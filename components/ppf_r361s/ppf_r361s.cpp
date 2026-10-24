@@ -31,6 +31,28 @@ void PPFR361SComponent::setup() {
 
   // Request initial status report from coprocessor
   this->poll_status_();
+
+  // Initialize baseline sensor states so Home Assistant entities are immediately populated
+  if (this->battery_level_sensor_ != nullptr)
+    this->battery_level_sensor_->publish_state(100.0f);
+  if (this->bowl_weight_sensor_ != nullptr)
+    this->bowl_weight_sensor_->publish_state(0.0f);
+  if (this->power_adapter_sensor_ != nullptr)
+    this->power_adapter_sensor_->publish_state(true);
+  if (this->food_low_sensor_ != nullptr)
+    this->food_low_sensor_->publish_state(false);
+  if (this->motor_jammed_sensor_ != nullptr)
+    this->motor_jammed_sensor_->publish_state(false);
+  if (this->bowl_connected_sensor_ != nullptr)
+    this->bowl_connected_sensor_->publish_state(true);
+  if (this->portions_today_sensor_ != nullptr)
+    this->portions_today_sensor_->publish_state(this->portions_today_);
+  if (this->last_feed_weight_sensor_ != nullptr)
+    this->last_feed_weight_sensor_->publish_state(0.0f);
+  if (this->manual_feed_portions_number_ != nullptr)
+    this->manual_feed_portions_number_->publish_state(1.0f);
+  if (this->status_text_sensor_ != nullptr)
+    this->status_text_sensor_->publish_state("Online / Standby");
 }
 
 void PPFR361SComponent::loop() {
@@ -197,24 +219,29 @@ void PPFR361SComponent::parse_rx_buffer_() {
 bool PPFR361SComponent::process_frame_(const uint8_t *frame, size_t len) {
   if (len < 10) return false;
 
+  ESP_LOGI(TAG, "RAW FRAME (%d bytes): %s", (int)len, format_hex_pretty(frame, len).c_str());
   uint8_t sub_cmd = frame[6];
   uint16_t opcode = frame[7] | (static_cast<uint16_t>(frame[8]) << 8);
   uint8_t status = frame[9];
 
   // Parse KLV elements from frame[10] to frame[len-1]
+  // In SC95F8766P hardware protocol, key length is 1 byte: [KeyID (1B)][Length (1B)][Value (Len B)]
   std::map<uint8_t, std::vector<uint8_t>> klv_map;
   size_t idx = 10;
-  while (idx + 3 <= len) {
+  while (idx + 2 <= len) {
     uint8_t key_id = frame[idx];
-    uint16_t item_len = frame[idx + 1] | (static_cast<uint16_t>(frame[idx + 2]) << 8);
-    idx += 3;
+    uint8_t item_len = frame[idx + 1];
+    idx += 2;
     if (idx + item_len > len) break;
     std::vector<uint8_t> val(frame + idx, frame + idx + item_len);
     klv_map[key_id] = val;
     idx += item_len;
   }
 
-  ESP_LOGD(TAG, "UART RX: Opcode 0x%04X, Status %d, KLV count %d", opcode, status, (int)klv_map.size());
+  ESP_LOGI(TAG, "UART RX: Opcode 0x%04X, SubCmd 0x%02X, Status %d, KLV count %d", opcode, sub_cmd, status, (int)klv_map.size());
+  for (const auto &kv : klv_map) {
+    ESP_LOGI(TAG, "  -> KLV Key %d (len %d): %s", kv.first, (int)kv.second.size(), format_hex_pretty(kv.second).c_str());
+  }
   this->handle_opcode_(opcode, status, klv_map);
   return true;
 }
@@ -230,23 +257,24 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
           this->child_lock_switch_->publish_state(locked);
       }
 
-      // Key 4: food_remind (Food Hopper Low)
+      // Key 4: food_remind (Food Hopper Low: 0 = OK, 1 = Low)
       if (klv.count(4) && !klv.at(4).empty()) {
         bool food_low = (klv.at(4)[0] != 0);
         if (this->food_low_sensor_ != nullptr)
           this->food_low_sensor_->publish_state(food_low);
       }
 
-      // Key 5: battery_percent (0-100%)
+      // Key 5: motor error / jammed (0 = OK, 1 = Jammed)
       if (klv.count(5) && !klv.at(5).empty()) {
-        float battery = static_cast<float>(klv.at(5)[0]);
-        if (this->battery_level_sensor_ != nullptr)
-          this->battery_level_sensor_->publish_state(battery);
+        bool jammed = (klv.at(5)[0] != 0);
+        if (this->motor_jammed_sensor_ != nullptr)
+          this->motor_jammed_sensor_->publish_state(jammed);
       }
 
-      // Key 7: powerAdapter (0 = Battery, 1 = AC Adapter)
-      if (klv.count(7) && !klv.at(7).empty()) {
-        bool ac_power = (klv.at(7)[0] != 0);
+      // Key 8: powerAdapter (0 = Battery, 1 = AC Adapter) - fallback to Key 7 if present
+      bool has_ac_key = klv.count(8) || klv.count(7);
+      if (has_ac_key) {
+        bool ac_power = klv.count(8) ? (klv.at(8)[0] != 0) : (klv.at(7)[0] != 0);
         if (this->power_adapter_sensor_ != nullptr)
           this->power_adapter_sensor_->publish_state(ac_power);
 
@@ -266,13 +294,22 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
         }
       }
 
-      // Key 8: bowlWeight (grams, int16 LE)
-      if (klv.count(8) && klv.at(8).size() >= 2) {
+      // Key 11 (0x0B): bowlWeight (grams, int16 LE) - fallback to Key 8 if 2+ bytes
+      if (klv.count(11) && klv.at(11).size() >= 2) {
+        int16_t weight = static_cast<int16_t>(klv.at(11)[0] | (klv.at(11)[1] << 8));
+        if (this->bowl_weight_sensor_ != nullptr)
+          this->bowl_weight_sensor_->publish_state(static_cast<float>(weight));
+      } else if (klv.count(8) && klv.at(8).size() >= 2) {
         int16_t weight = static_cast<int16_t>(klv.at(8)[0] | (klv.at(8)[1] << 8));
         if (this->bowl_weight_sensor_ != nullptr)
           this->bowl_weight_sensor_->publish_state(static_cast<float>(weight));
+      }
+
+      // Key 21 (0x15): bowlConnected (0 = Disconnected, 1 = Connected)
+      if (klv.count(21) && !klv.at(21).empty()) {
+        bool connected = (klv.at(21)[0] != 0);
         if (this->bowl_connected_sensor_ != nullptr)
-          this->bowl_connected_sensor_->publish_state(true);
+          this->bowl_connected_sensor_->publish_state(connected);
       }
 
       if (this->status_text_sensor_ != nullptr && this->calib_state_ == CALIB_IDLE)

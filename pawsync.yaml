@@ -28,7 +28,7 @@ external_components:
       path: components
 
 logger:
-  level: INFO
+  level: DEBUG
   baud_rate: 0  # Disable logger UART to prevent interference with SC95F8766P link
 
 api:
