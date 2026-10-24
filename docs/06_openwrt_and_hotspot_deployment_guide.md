@@ -11,88 +11,83 @@
 
 ## 1. Network Topology & Deployment Overview
 
-The user environment features an **OpenWrt-based home router** (`192.168.1.1`) acting as the primary LAN gateway, DHCP server, and Wi-Fi access point, with an optional **mobile phone hotspot** available for direct, isolated connectivity.
+The user environment features a flat `/24` home network subnet (`192.168.1.0/24`) with the following active nodes:
+- **ISP Router / Default Gateway (`192.168.1.1`):** Non-OpenWrt ISP gateway handling WAN NAT and primary DHCP.
+- **Feeder Access Point (`192.168.1.160`):** The primary Wi-Fi AP currently serving the Pawsync Pet Feeder.
+- **OpenWrt AP / Secondary Staging Node (`192.168.1.253`):** OpenWrt access point running SSH (port 22) and uHTTPd (port 80).
+- **Development Workstation (`192.168.1.216`):** Host running the ESPHome toolchain, Python OTA server, and bypass scripts.
+- **Pawsync Pet Feeder Candidate IPs:** `192.168.1.48` (`94:a9:90:4c:7e:d8`) or `192.168.1.45` (`94:a9:90:4c:18:d8`) (both Espressif MAC OUIs).
 
 ```mermaid
 flowchart TD
-    subgraph Router Environment [OpenWrt Router - 192.168.1.1]
-        DHCP["DHCP & ARP Tables<br>(/tmp/dhcp.leases)"]
-        UHTTPD["Built-in uHTTPd Web Server<br>(/www/ -> Port 80)"]
-        TCPDUMP["Traffic Inspection<br>(tcpdump on br-lan)"]
-    end
+    ISP["ISP Router (Non-OpenWrt Gateway)<br>192.168.1.1"] --- Switch["Flat LAN Subnet (192.168.1.0/24)"]
+    Switch --- FeederAP["Feeder Wi-Fi AP<br>192.168.1.160"]
+    Switch --- OpenWrtAP["OpenWrt AP (uHTTPd & SSH)<br>192.168.1.253"]
+    Switch --- DevPC["Dev Workstation<br>192.168.1.216"]
 
-    Feeder["Pawsync Pet Feeder<br>(ESP32-C3 / 192.168.1.48)"] <-->|"Wi-Fi (802.11 b/g/n 2.4GHz)"| RouterEnvironment
-    Operator["Workstation / Laptop<br>(192.168.1.100)"] -->|"SCP pawsync_ota_update.bin"| UHTTPD
-    Operator -->|"trigger_ota.py"| Feeder
-    Feeder -->|"HTTP GET /pawsync_ota_update.bin"| UHTTPD
+    Feeder["Pawsync Pet Feeder<br>(192.168.1.48 or .45)"] <-->|"Wi-Fi (2.4GHz)"| FeederAP
+    
+    DevPC -.->|"Staging Option 1: Built-in HTTP Server (Port 8000)"| DevPC
+    DevPC -.->|"Staging Option 2: SCP to /www/ (Port 80)"| OpenWrtAP
+
+    Feeder ==>|"Direct LAN HTTP GET (pawsync_ota_update.bin)"| DevPC
+    Feeder -.->|"Alternative LAN HTTP GET"| OpenWrtAP
 ```
 
-### Key Advantages of Router-Native Staging:
-1. **Guaranteed Local MTU & Low Latency:** Serving the 1.14 MB firmware directly from the OpenWrt router avoids Wi-Fi-to-Wi-Fi relay bottlenecks.
-2. **Deterministic Packet Visibility:** Running `tcpdump` directly on the OpenWrt router's bridge interface (`br-lan`) provides real-time byte-level insight into the download progress.
-3. **No Firewall Traversal Issues:** The router's `/www/` directory is natively accessible to all devices on the LAN over port 80.
+### Key Architectural Realizations:
+1. **Flat Subnet Simplicity:** All nodes share the `192.168.1.0/24` subnet. The pet feeder can initiate a direct TCP/HTTP connection to the dev workstation (`192.168.1.216:8000`) or OpenWrt (`192.168.1.253:80`) with **zero** routing, NAT, or ISP router interference.
+2. **Two Flexible Firmware Staging Options:**
+   - **Option A (Workstation-Direct):** Run `tools/ota/trigger_ota.py --serve --http-port 8000` on `192.168.1.216`. Shows live byte transfers directly in your local terminal.
+   - **Option B (OpenWrt `/www/`):** Copy the binary to `192.168.1.253:/www/` via `scp`. Staged at `http://192.168.1.253/pawsync_ota_update.bin`.
+3. **Ingress Vector Selection:** Because port 55555 returns `ECONNREFUSED` on the stock feeder, the trigger command must be dispatched via **VeSync Cloud Bypass V2** (`--inject-cloud`), which sends the download command over AWS IoT MQTT to the feeder.
 
 ---
 
-## 2. Phase 1: Identifying the Feeder on OpenWrt
+## 2. Phase 1: Identifying the Feeder IP & MAC Address
 
-Connect to your OpenWrt router via SSH:
-```bash
-ssh root@192.168.1.1
-```
+Two Espressif devices are present on your LAN:
+- `192.168.1.48` (`94:a9:90:4c:7e:d8`)
+- `192.168.1.45` (`94:a9:90:4c:18:d8`)
 
-### 2.1 Inspect DHCP Leases
-Search the active DHCP lease table for the ESP32-C3 device:
-```bash
-cat /tmp/dhcp.leases | grep -E "espressif|pawsync|VS_"
-```
-*Example Output:*
-```text
-1730005421 dc:54:75:e8:14:2c 192.168.1.48 espressif *
-```
-*(Espressif MAC OUI prefix is typically `dc:54:75`, `84:f7:03`, `30:ae:a4`, or `24:dc:c3`).*
-
-### 2.2 Inspect ARP Table & Ping Feeder
-Verify that the device responds to ICMP echo requests on the LAN bridge:
-```bash
-grep "192.168.1.48" /proc/net/arp
-ping -c 3 192.168.1.48
-```
+To confirm which device is the Pawsync Pet Feeder:
+1. Open the **VeSync App** on your phone.
+2. Select your **Pet Feeder** -> Tap **Settings** (gear icon) -> Tap **Device Info**.
+3. Note the **MAC Address** (ends in either `7E:D8` or `18:D8`), the **CID (Client ID)**, and your **Account ID**.
 
 ---
 
-## 3. Phase 2: Staging Firmware Directly in OpenWrt `/www/`
+## 3. Phase 2: Choosing Firmware Staging Location
 
-Because OpenWrt runs an internal web server (`uhttpd`) serving files from `/www/` on port 80, placing the OTA package in `/www/` eliminates the need to run an external Python HTTP server.
+You have two fast staging options on your flat `192.168.1.0/24` LAN:
 
-### 3.1 Copy Package to OpenWrt from Workstation
-From your development workstation in `/root/pawsync_oma2`:
+### Option A: Workstation Direct HTTP Server (Recommended - Quickest)
+Run the built-in HTTP server directly from your workstation (`192.168.1.216`):
 ```bash
-scp pawsync_ota_update.bin root@192.168.1.1:/www/pawsync_ota_update.bin
+/root/esphome/venv/bin/python3 tools/ota/trigger_ota.py --serve --http-port 8000
 ```
+- Staging URL: `http://192.168.1.216:8000/pawsync_ota_update.bin`
+- Advantage: Shows live download progress and byte transfers directly in your active terminal.
 
-### 3.2 Verify Staging on Router
-On the OpenWrt router:
+### Option B: OpenWrt AP uHTTPd Web Server (`192.168.1.253`)
+Copy the binary into the OpenWrt AP's `/www/` directory:
+```bash
+scp pawsync_ota_update.bin root@192.168.1.253:/www/pawsync_ota_update.bin
+```
+Verify on OpenWrt (`ssh root@192.168.1.253`):
 ```bash
 ls -lh /www/pawsync_ota_update.bin
-md5sum /www/pawsync_ota_update.bin
 ```
-The file is now accessible across the entire LAN at:
-`http://192.168.1.1/pawsync_ota_update.bin`
+- Staging URL: `http://192.168.1.253/pawsync_ota_update.bin`
 
 ---
 
-## 4. Phase 3: Real-Time Traffic Inspection on OpenWrt
+## 4. Phase 3: Real-Time Traffic Inspection (Optional)
 
-On the OpenWrt router, monitor the feeder's network activity in real time using `tcpdump`:
+If using the OpenWrt AP (`192.168.1.253`), you can SSH into OpenWrt and monitor the transfer in real time:
 
 ```bash
-tcpdump -i br-lan host 192.168.1.48 -nn
-```
-
-To specifically monitor the HTTP firmware download handshake and chunk transfer:
-```bash
-tcpdump -i br-lan host 192.168.1.48 and port 80 -nn -vv
+ssh root@192.168.1.253
+tcpdump -i br-lan host <FEEDER_IP> and port 80 -nn -vv
 ```
 
 ---
@@ -104,31 +99,37 @@ From your workstation in `/root/pawsync_oma2`:
 ### Path A: Local Developer Port (If Port 55555 is Open)
 1. **Probe the port:**
    ```bash
-   /root/esphome/venv/bin/python3 tools/ota/trigger_ota.py --probe --feeder-ip 192.168.1.48
+   /root/esphome/venv/bin/python3 tools/ota/trigger_ota.py --probe --feeder-ip <FEEDER_IP>
    ```
 2. **If Port 55555 is OPEN, inject local JSON:**
    ```bash
    /root/esphome/venv/bin/python3 tools/ota/trigger_ota.py --inject-local \
-     --feeder-ip 192.168.1.48 \
-     --url http://192.168.1.1/pawsync_ota_update.bin
+     --feeder-ip <FEEDER_IP> \
+     --url http://192.168.1.216:8000/pawsync_ota_update.bin
    ```
 
-### Path B: VeSync Cloud Bypass V2 Ingress (Factory Stock Feeder Fallback)
-If port 55555 is closed (default out-of-the-box state), send the trigger via VeSync Cloud Bypass V2:
+### Path B: VeSync Cloud Bypass V2 Ingress (Factory Stock Feeder Ingress)
+Because stock feeders leave port 55555 closed (`ECONNREFUSED`), dispatch the command via VeSync Cloud Bypass V2:
 ```bash
 /root/esphome/venv/bin/python3 tools/ota/trigger_ota.py --inject-cloud \
   --account-id "<YOUR_VESYNC_ACCOUNT_ID>" \
   --token "<YOUR_VESYNC_TOKEN>" \
   --cid "<YOUR_DEVICE_CID>" \
-  --url http://192.168.1.1/pawsync_ota_update.bin
+  --url http://192.168.1.216:8000/pawsync_ota_update.bin
 ```
+*(Replace URL with `http://192.168.1.253/pawsync_ota_update.bin` if using Option B).*
 
 ---
 
 ## 6. Phase 5: Monitoring the Flashing Process
 
-Watch your OpenWrt `tcpdump` terminal:
-1. **HTTP GET Request:** You will see the feeder initiate a TCP handshake to `192.168.1.1:80` and issue:
+Watch your terminal (either the `--serve` output or OpenWrt `tcpdump`):
+1. **HTTP GET Request:** The feeder initiates a TCP connection to the staging URL and issues:
+   `GET /pawsync_ota_update.bin HTTP/1.1`
+2. **Streaming Transfer:** Packets stream across the LAN (~10–15 seconds for 1.14 MB).
+3. **Download Complete & Reboot:** The TCP connection terminates cleanly (`FIN/ACK`). The feeder's ESP32-C3 writes `otadata`, validates the header MD5, and reboots.
+4. **DHCP Re-Lease:** Within 5–10 seconds, the device will connect to your Wi-Fi AP (`192.168.1.160`) as `pawsync-feeder`.
+5. **Home Assistant Discovery:** The device announces mDNS (`pawsync-feeder.local`) on port 6053, and Home Assistant automatically prompts to configure the Pawsync Pet Feeder integration.
    `GET /pawsync_ota_update.bin HTTP/1.1`
 2. **Streaming Transfer:** Packets will stream rapidly across `br-lan` (~10–15 seconds for 1.14 MB).
 3. **Download Complete & Reboot:** The TCP connection terminates cleanly (`FIN/ACK`). The feeder's ESP32-C3 writes `otadata`, validates the header MD5, and reboots.
