@@ -7,12 +7,20 @@ esphome:
   friendly_name: ${friendly_name}
   comment: "Local ESPHome firmware for Pawsync PPF-R361S Pet Feeder with On-Device 7-Plan Scheduler"
   min_version: 2024.6.0
+  on_boot:
+    priority: 2000.0
+    then:
+      - lambda: |-
+          #if defined(USE_ESP_IDF)
+          esp_ota_mark_app_valid_cancel_rollback();
+          #endif
 
 esp32:
   board: esp32-c3-devkitm-1
   variant: esp32c3
   framework:
     type: esp-idf
+  partitions: partitions.csv
 
 external_components:
   - source:

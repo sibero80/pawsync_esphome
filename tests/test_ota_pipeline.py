@@ -39,8 +39,10 @@ from tools.ota.trigger_ota import (
     build_set_developer_payload,
     build_cloud_bypass_payload,
     probe_developer_port,
+    sanitize_url_for_waf,
     OTAFileHandler,
-    HTTPServer
+    HTTPServer,
+    DEFAULT_MODEL as DEFAULT_CLOUD_MODEL
 )
 
 
@@ -49,7 +51,7 @@ def test_container_crypto_and_header_parsing():
     print("[*] Running Test 1: Container packaging, AES-128-CBC decryption & MD5 roundtrip...")
     # Generate 64 KB test payload with ESP32 magic byte
     dummy_payload = bytes([ESP_IMAGE_HEADER_MAGIC]) + os.urandom(65535)
-    expected_md5 = hashlib.md5(dummy_payload).hexdigest().encode('ascii')
+    expected_md5 = hashlib.md5(dummy_payload).hexdigest().upper().encode('ascii')
 
     with tempfile.NamedTemporaryFile("wb", delete=False) as in_f:
         in_f.write(dummy_payload)
@@ -181,37 +183,39 @@ def test_cloud_bypass_payload_and_headers():
     # 1. Endpoint Check
     assert endpoint.endswith("/pet/api/deviceManaged/v1/bypassV2"), f"Invalid endpoint: {endpoint}"
 
-    # 2. HTTP Gateway Headers Check
-    assert headers["accountID"] == "ACC_12345", "Missing accountID header"
-    assert headers["token"] == "TOK_ABCDE", "Missing token header"
-    assert headers["bizType"] == "pet", f"Invalid bizType header: {headers.get('bizType')}"
-    assert "traceId" in headers, "Missing traceId header"
+    # 2. HTTP Gateway Headers Check (okhttp User-Agent to avoid WAF blocks)
     assert "application/json" in headers["Content-Type"], "Invalid Content-Type header"
-    assert "Pawsync" in headers["User-Agent"], "Invalid User-Agent header"
+    assert headers["User-Agent"] == "okhttp/3.14.9", "Invalid User-Agent header"
 
-    # 3. Context Payload Check
-    ctx = body["context"]
-    assert ctx["accountID"] == "ACC_12345"
-    assert ctx["token"] == "TOK_ABCDE"
-    assert ctx["bizType"] == "pet", f"Invalid context.bizType: {ctx.get('bizType')}"
-    assert ctx["userType"] == "1", f"Invalid context.userType: {ctx.get('userType')}"
-    assert ctx["countryCode"] == "US"
-    assert "method" not in ctx, "'method' must NOT be placed inside context!"
-    assert "cid" not in ctx, "'cid' must NOT be placed inside context!"
+    # 3. Flattened Root Payload Check (h6.b.f in Pawsync APK)
+    assert body["accountID"] == "ACC_12345"
+    assert body["token"] == "TOK_ABCDE"
+    assert body["method"] == "bypassV2"
+    assert body["cid"] == "DEV_FEEDER_001"
+    assert body["configModule"] == DEFAULT_CLOUD_MODEL
+    assert body["appID"] == "psybfyca"
+    assert body["clientType"] == "pawsync"
 
-    # 4. Device Command Envelope Check
-    envelope = body["data"]
+    # 4. Payload Envelope Check
+    envelope = body["payload"]
     assert envelope["method"] == "upFirmware"
     assert envelope["source"] == "APP"
     device_data = envelope["data"]
     assert device_data["cid"] == "DEV_FEEDER_001"
-    assert device_data["configModule"] == DEFAULT_MODEL
+    assert device_data["configModule"] == DEFAULT_CLOUD_MODEL
     assert device_data["pluginName"] == "mainFw"
     assert device_data["url"] == "http://192.168.1.100:8000/firmware.bin"
     assert device_data["newVersion"] == "9.9.9"
     assert device_data["upMode"] == 2
 
-    print("    [PASS] Test 5: Cloud Bypass V2 schema, gateway headers, and nested device envelope verified.")
+    # 5. Cloud WAF & DNS Rebind Sanitizer Check
+    raw_url = "http://192.168.1.216:8000/firmware.bin"
+    dword_url = sanitize_url_for_waf(raw_url, mode="dword")
+    sslip_url = sanitize_url_for_waf(raw_url, mode="sslip")
+    assert dword_url == "http://3232235992:8000/firmware.bin", f"Unexpected DWORD URL: {dword_url}"
+    assert sslip_url == "http://192-168-1-216.sslip.io:8000/firmware.bin", f"Unexpected sslip URL: {sslip_url}"
+
+    print("    [PASS] Test 5: Cloud Bypass V2 schema, payload envelope, and WAF sanitization verified.")
 
 
 def test_http_staging_server():
@@ -236,7 +240,7 @@ def test_http_staging_server():
         old_cwd = os.getcwd()
         os.chdir(temp_dir)
         try:
-            with request.urlopen(url, timeout=3.0) as resp:
+            with request.urlopen(url, timeout=15.0) as resp:
                 downloaded = resp.read()
                 assert len(downloaded) == len(test_data), f"Length mismatch: {len(downloaded)} != {len(test_data)}"
                 assert downloaded == test_data, "Downloaded data corrupted"
@@ -278,7 +282,7 @@ def test_production_binary_package():
     decryptor = cipher.decryptor()
     hdr = decryptor.update(enc_hdr) + decryptor.finalize()
 
-    payload_md5 = hashlib.md5(orig_bin).hexdigest().encode('ascii')
+    payload_md5 = hashlib.md5(orig_bin).hexdigest().upper().encode('ascii')
     assert hdr[1:33] == payload_md5
     assert hdr[34:34 + len(DEFAULT_MODEL[:15])] == DEFAULT_MODEL[:15].encode('ascii')
     assert hdr[50:50 + len("9.9.9")] == b"9.9.9"

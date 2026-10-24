@@ -19,18 +19,34 @@ import hashlib
 import argparse
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-DEFAULT_KEY = b'llwantaeskey1.01'
-DEFAULT_IV  = b'llwantaesivv1.01'
-DEFAULT_MODEL = 'VS_WB_PFM_PPF-R361S-WUS_US'
+# Key derivation: Stock firmware ota task dynamically derives AES-128 Key & IV
+# at address 0x42017704: MD5("Levoit") -> 16 bytes raw binary
+LEVOIT_MD5_KEY = hashlib.md5(b"Levoit").digest()
+LEVOIT_MD5_IV  = hashlib.md5(b"Levoit").digest()
+LEGACY_KEY     = b"llwantaeskey1.01"
+LEGACY_IV      = b"llwantaesivv1.01"
+
+DEFAULT_KEY = LEVOIT_MD5_KEY
+DEFAULT_IV  = LEVOIT_MD5_IV
+DEFAULT_MODEL = 'PPF-R361S'
 DEFAULT_VERSION = '9.9.9'
 MAX_OTA_PARTITION_SIZE = 1310720  # 1.25 MB (0x140000)
 ESP_IMAGE_HEADER_MAGIC = 0xE9
 
 
-def create_vesync_ota_package(bin_path: str, output_path: str, model: str = DEFAULT_MODEL, version: str = DEFAULT_VERSION, force: bool = False):
+DEFAULT_INPUT_BIN = ".esphome/build/pawsync-feeder/build/firmware.ota.bin"
+
+
+def create_vesync_ota_package(bin_path: str = DEFAULT_INPUT_BIN, output_path: str = "pawsync_ota_update.bin", model: str = DEFAULT_MODEL, version: str = DEFAULT_VERSION, force: bool = False, key: bytes = DEFAULT_KEY, iv: bytes = DEFAULT_IV):
     if not os.path.exists(bin_path):
-        print(f"Error: input binary '{bin_path}' not found", file=sys.stderr)
-        sys.exit(1)
+        # Fallback to pawsync-feeder.bin if firmware.ota.bin is not present
+        alt_bin = ".esphome/build/pawsync-feeder/build/pawsync-feeder.bin"
+        if os.path.exists(alt_bin):
+            bin_path = alt_bin
+        else:
+            print(f"Error: input binary '{bin_path}' not found", file=sys.stderr)
+            print("Did you run '/root/esphome/venv/bin/esphome compile pawsync.yaml' first?", file=sys.stderr)
+            sys.exit(1)
 
     with open(bin_path, "rb") as f:
         bin_data = f.read()
@@ -53,8 +69,8 @@ def create_vesync_ota_package(bin_path: str, output_path: str, model: str = DEFA
         print(f"Overflow: {bin_len - MAX_OTA_PARTITION_SIZE:,} bytes over limit. Flashing would corrupt usercfg at 0x290000.", file=sys.stderr)
         sys.exit(1)
 
-    # 3. Calculate MD5 hex digest (32 bytes ASCII)
-    md5_hex = hashlib.md5(bin_data).hexdigest().encode('ascii')
+    # 3. Calculate MD5 hex digest (32 bytes ASCII, uppercase required by device strcmp)
+    md5_hex = hashlib.md5(bin_data).hexdigest().upper().encode('ascii')
 
     # 4. Construct 128-byte unencrypted header
     header = bytearray(128)
@@ -77,7 +93,7 @@ def create_vesync_ota_package(bin_path: str, output_path: str, model: str = DEFA
     header[74:76] = b'UN'
 
     # 5. Encrypt 128-byte header with AES-128-CBC
-    cipher = Cipher(algorithms.AES(DEFAULT_KEY), modes.CBC(DEFAULT_IV))
+    cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
     encryptor = cipher.encryptor()
     enc_header = encryptor.update(bytes(header)) + encryptor.finalize()
     assert len(enc_header) == 128, f"Encrypted header size mismatch: {len(enc_header)}"
@@ -113,11 +129,17 @@ def create_vesync_ota_package(bin_path: str, output_path: str, model: str = DEFA
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Package ESP32-C3 firmware into hardened VeSync OTA container")
-    parser.add_argument("input_bin", help="Path to input raw firmware binary (.bin)")
+    parser.add_argument("input_bin", nargs="?", default=DEFAULT_INPUT_BIN, help=f"Path to input raw firmware binary (.bin) (default: {DEFAULT_INPUT_BIN})")
     parser.add_argument("-o", "--output", default="pawsync_ota_update.bin", help="Output package path (default: pawsync_ota_update.bin)")
     parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Target device model (default: {DEFAULT_MODEL})")
     parser.add_argument("--version", default=DEFAULT_VERSION, help=f"Target firmware version (default: {DEFAULT_VERSION})")
+    parser.add_argument("--key-mode", choices=["levoit", "legacy"], default="levoit", help="AES key derivation mode: 'levoit' (MD5('Levoit'), actual stock ota engine key) or 'legacy' (llwantaeskey1.01)")
     parser.add_argument("--force", action="store_true", help="Bypass ESP32 image magic byte validation")
     args = parser.parse_args()
 
-    create_vesync_ota_package(args.input_bin, args.output, args.model, args.version, args.force)
+    if args.key_mode == "legacy":
+        k, iv = LEGACY_KEY, LEGACY_IV
+    else:
+        k, iv = LEVOIT_MD5_KEY, LEVOIT_MD5_IV
+
+    create_vesync_ota_package(args.input_bin, args.output, args.model, args.version, args.force, key=k, iv=iv)
