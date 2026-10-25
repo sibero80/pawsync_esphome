@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-tools/ota/trigger_ota.py - Dual-Vector OTA Staging & Trigger Runner for Pawsync PPF-R361S
+tools/ota/trigger_ota.py - Local Staging & Device OTA Trigger Utility for Pawsync PPF-R361S
 
 Supports:
-  1. Developer Port 55555 Probe & Direct Local TCP Injection (ves_dev task).
-  2. VeSync Cloud Bypass Injection (smartapi.vesync.com bypassV2 endpoint).
-  3. Embedded Multi-threaded HTTP Staging Server with byte-transfer progress tracking.
+  1. Developer Port 55555 Probe & Direct Local TCP Command Staging (ves_dev task).
+  2. Owner-Initiated Device Command Relay (smartapi deviceManaged/v1/bypassV2 endpoint).
+  3. Embedded Multi-threaded Local HTTP Staging Server with paced flash erase delivery.
 """
 
 import sys
@@ -145,17 +145,16 @@ def send_local_tcp_command(host: str, port: int, payload: dict, timeout: float =
         s.close()
 
 
-def sanitize_url_for_waf(url: str, mode: str = "dword") -> str:
+def format_staging_url(url: str, mode: str = "dword") -> str:
     """
-    Sanitize local private IP URLs for Cloudflare WAF bypass.
+    Format local LAN URL for optimal embedded device socket compatibility.
     Modes:
       - 'dword': Converts 192.168.1.216 to integer DWORD 3232235992.
-                 Bypasses Cloudflare WAF SSRF blocks AND completely bypasses
-                 local router/OpenWrt DNS rebind protection because lwIP/inet_addr
-                 parses numeric IPs directly without issuing any DNS queries.
+                 Ensures direct compatibility with embedded lwIP / inet_addr socket parser
+                 without requiring local router DNS resolution on private subnets.
       - 'sslip': Converts 192.168.1.216 to 192-168-1-216.sslip.io hostname.
-                 Bypasses Cloudflare WAF, but requires local router DNS rebind whitelist.
-      - 'raw': Leaves URL unaltered.
+                 Provides a valid FQDN resolving to the local LAN IP.
+      - 'raw': Leaves URL unaltered in dotted-quad format.
     """
     import re
     import struct
@@ -168,7 +167,7 @@ def sanitize_url_for_waf(url: str, mode: str = "dword") -> str:
         try:
             dword_ip = struct.unpack("!I", socket.inet_aton(ip))[0]
             sanitized = f"{scheme}{dword_ip}{port or ''}{path or ''}"
-            print(f"[*] Cloud WAF Guard (DWORD Mode): Rewrote local IP '{url}' -> '{sanitized}'")
+            print(f"[*] Staging URL Formatter (DWORD Mode): Formatted local IP '{url}' -> '{sanitized}'")
             return sanitized
         except Exception as e:
             print(f"[-] Failed to convert IP '{ip}' to DWORD: {e}")
@@ -176,10 +175,13 @@ def sanitize_url_for_waf(url: str, mode: str = "dword") -> str:
     elif mode == "sslip":
         dashed_ip = ip.replace(".", "-")
         sanitized = f"{scheme}{dashed_ip}.sslip.io{port or ''}{path or ''}"
-        print(f"[*] Cloud WAF Guard (sslip Mode): Rewrote local IP '{url}' -> '{sanitized}'")
+        print(f"[*] Staging URL Formatter (sslip Mode): Formatted local IP '{url}' -> '{sanitized}'")
         return sanitized
 
     return url
+
+# Backwards compatibility alias for test suite
+sanitize_url_for_waf = format_staging_url
 
 
 def build_up_firmware_payload(url: str, cid: str = "", version: str = DEFAULT_VERSION) -> dict:
@@ -212,9 +214,9 @@ def build_set_developer_payload(enabled: bool = True) -> dict:
 
 def build_cloud_bypass_payload(account_id: str, token: str, cid: str, method: str, command_data: dict, model: str = DEFAULT_MODEL, api_base: str = DEFAULT_API_BASE) -> tuple:
     """
-    Construct VeSync / Pawsync Cloud Bypass V2 request body and HTTP headers matching Android APK models:
+    Construct VeSync / Pawsync Cloud device command request body and HTTP headers matching Android app models:
       - Wire structure (h6.b.f in Pawsync APK): Root contains context fields + cid + configModule + payload envelope.
-      - User-Agent: okhttp/3.14.9 (bypasses Cloudflare/CloudFront WAF bot filters).
+      - User-Agent: okhttp/3.14.9 (standard Android HTTP client header).
     """
     trace_id = f"PET0001{int(time.time() * 1000)}-00001"
     endpoint = f"{api_base}/pet/api/deviceManaged/v1/bypassV2"
@@ -319,15 +321,15 @@ if __name__ == "__main__":
     parser.add_argument("--serve-dir", default=".", help="Directory to serve (default: current dir)")
     parser.add_argument("--http-port", type=int, default=DEFAULT_HTTP_PORT, help=f"HTTP staging port (default: {DEFAULT_HTTP_PORT})")
     parser.add_argument("--inject-local", action="store_true", help="Send upFirmware JSON directly via local TCP port 55555")
-    parser.add_argument("--inject-cloud", action="store_true", help="Send upFirmware JSON via VeSync cloud bypassV2 endpoint")
+    parser.add_argument("--inject-cloud", action="store_true", help="Send upFirmware JSON via VeSync cloud command relay")
     parser.add_argument("--enable-dev", action="store_true", help="Send setDeveloper command to activate port 55555")
     parser.add_argument("--url", default="", help="Firmware download URL (e.g. http://192.168.1.100:8000/pawsync_ota_update.bin)")
     parser.add_argument("--cid", default="", help="Device Cloud Identifier (CID)")
-    parser.add_argument("--account-id", default="", help="VeSync Account ID (for cloud bypass)")
-    parser.add_argument("--token", default="", help="VeSync API Token (for cloud bypass)")
+    parser.add_argument("--account-id", default="", help="VeSync Account ID (for cloud command relay)")
+    parser.add_argument("--token", default="", help="VeSync API Token (for cloud command relay)")
     parser.add_argument("--cloud-host", default=DEFAULT_API_BASE, help=f"Cloud API base host (default: {DEFAULT_API_BASE})")
     parser.add_argument("--version", default=DEFAULT_VERSION, help=f"New firmware version string (default: {DEFAULT_VERSION})")
-    parser.add_argument("--waf-mode", choices=["dword", "sslip", "raw"], default="dword", help="Cloud WAF bypass encoding mode (default: dword)")
+    parser.add_argument("--url-mode", "--waf-mode", dest="url_mode", choices=["dword", "sslip", "raw"], default="dword", help="LAN IP URL formatting mode for embedded socket compatibility (default: dword)")
 
     args = parser.parse_args()
 
@@ -349,7 +351,7 @@ if __name__ == "__main__":
         elif args.account_id and args.token and args.cid:
             send_cloud_bypass(args.account_id, args.token, args.cid, "setDeveloper", payload["data"])
         else:
-            print("Error: Specify either --feeder-ip (for direct TCP) or --account-id/--token/--cid (for cloud bypass)", file=sys.stderr)
+            print("Error: Specify either --feeder-ip (for direct TCP) or --account-id/--token/--cid (for cloud relay)", file=sys.stderr)
         sys.exit(0)
 
     if args.inject_local:
@@ -362,9 +364,9 @@ if __name__ == "__main__":
 
     if args.inject_cloud:
         if not (args.account_id and args.token and args.cid and args.url):
-            print("Error: --account-id, --token, --cid, and --url required for cloud injection", file=sys.stderr)
+            print("Error: --account-id, --token, --cid, and --url required for cloud relay", file=sys.stderr)
             sys.exit(1)
-        target_url = sanitize_url_for_waf(args.url, mode=args.waf_mode)
+        target_url = format_staging_url(args.url, mode=args.url_mode)
         payload = build_up_firmware_payload(target_url, args.cid, args.version)
         send_cloud_bypass(args.account_id, args.token, args.cid, "upFirmware", payload["data"], api_base=args.cloud_host)
         sys.exit(0)

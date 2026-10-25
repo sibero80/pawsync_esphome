@@ -1,6 +1,10 @@
 # Secrets and Credentials
 secrets.yaml
 
+# Binary flash dumps and private firmware images
+esp32c3_dump.bin
+*.dump
+
 # Build & Runtime Artifacts
 .esphome/
 .omg/
