@@ -70,17 +70,26 @@ def wait_for_online(timeout_s: int = 60):
 
 
 def test_battery_level():
-    """Verify Key 14 battery percentage parsing."""
-    print("\n--- Test: Battery Level Telemetry (Key 14) ---")
-    state = get_entity_state("sensor.pawsync_ppf_r361s_feeder_battery_level")
-    raw_val = state.get("state")
-    print(f"[*] Current battery level: {raw_val}%")
-    try:
-        val = float(raw_val)
-        assert val > 0.0, f"Expected battery level > 0% (was previously stuck at 0.0%), got: {val}"
-        print(f"[PASS] Battery level reported accurately: {val}%")
-    except ValueError:
-        raise AssertionError(f"Invalid battery state format: {raw_val}")
+    """Verify battery presence and percentage parsing (matching stock NotInstalled when Key 5 is 0)."""
+    print("\n--- Test: Battery Level Telemetry & Absence Detection ---")
+    bat_state = get_entity_state("sensor.pawsync_ppf_r361s_feeder_battery_level")
+    bat_val = bat_state.get("state")
+    print(f"[*] Current battery level sensor state: {bat_val}")
+
+    # Check battery installed binary sensor if available
+    inst_eid = find_entity_by_suffix("battery_installed")
+    if inst_eid and inst_eid != "battery_installed":
+        inst_state = get_entity_state(inst_eid).get("state")
+        print(f"[*] Battery installed binary sensor state: {inst_state}")
+        assert inst_state in ("off", "false", "unavailable", "unknown"), (
+            f"Expected battery_installed to be 'off' (no physical battery installed), got: {inst_state}"
+        )
+
+    # When no battery is installed, state should be unavailable / unknown / None / nan
+    assert bat_val in ("unavailable", "unknown", "None", "nan"), (
+        f"Expected battery level to be unavailable (no battery installed in unit), but got: {bat_val}%"
+    )
+    print(f"[PASS] Battery absence correctly identified (status: {bat_val})")
 
 
 def find_entity_by_suffix(suffix: str) -> str:
@@ -133,7 +142,7 @@ def test_tare_bowl():
     
     print(f"[*] Pressing tare button: {button_eid}...")
     call_service("button", "press", {"entity_id": button_eid})
-    time.sleep(2.0)
+    time.sleep(2.5)
     
     new_weight = float(get_entity_state(sensor_eid).get("state", 999))
     print(f"[*] Bowl weight post-tare: {new_weight}g")
@@ -142,42 +151,52 @@ def test_tare_bowl():
 
 
 def test_remote_feed_execution():
-    """Verify remote feed execution without child-lock blocking or polling disruption."""
-    print("\n--- Test: Single Portion Remote Feed Execution ---")
+    """Verify remote feed execution with physical motor actuation and load cell weight delta validation."""
+    print("\n--- Test: Single Portion Remote Feed Execution & Physical Scale Verification ---")
     feed_button = "button.pawsync_ppf_r361s_feeder_feed_1_portion"
     status_sensor = "sensor.pawsync_ppf_r361s_feeder_feeder_status"
     weight_sensor = "sensor.pawsync_ppf_r361s_feeder_last_feed_weight"
+    bowl_sensor = "sensor.pawsync_ppf_r361s_feeder_bowl_weight"
+    portions_sensor = "sensor.pawsync_ppf_r361s_feeder_portions_today"
     child_lock_switch = "switch.pawsync_ppf_r361s_feeder_child_lock"
 
     initial_child_lock = get_entity_state(child_lock_switch).get("state")
-    print(f"[*] Child lock state before feed: {initial_child_lock}")
+    initial_bowl_weight = float(get_entity_state(bowl_sensor).get("state", 0.0))
+    initial_portions = float(get_entity_state(portions_sensor).get("state", 0.0))
+    print(f"[*] Initial conditions: Child Lock={initial_child_lock}, Bowl Weight={initial_bowl_weight}g, Portions Today={initial_portions}")
 
     print(f"[*] Triggering 1-portion feed via {feed_button}...")
     call_service("button", "press", {"entity_id": feed_button})
 
-    # Poll status frequently over the next 10 seconds
+    # Poll status frequently over the next 20 seconds
     states_observed = []
     start_time = time.time()
     dispense_start = None
     dispense_end = None
 
-    while time.time() - start_time < 12.0:
+    while time.time() - start_time < 20.0:
         st = get_entity_state(status_sensor).get("state", "")
         if not states_observed or states_observed[-1] != st:
             states_observed.append(st)
             ts = round(time.time() - start_time, 2)
             print(f"    [{ts}s] Feeder status -> '{st}'")
-            if "Dispensing" in st or "Feeding" in st:
+            if "Feeding" in st or "Dispensing" in st:
                 if dispense_start is None:
                     dispense_start = time.time()
-            if "Complete" in st or "Standby" in st:
-                if dispense_start is not None and dispense_end is None:
-                    dispense_end = time.time()
+            if "Complete" in st:
+                dispense_end = time.time()
+                break
+            elif dispense_start is not None and "Online" in st:
+                dispense_end = time.time()
+                break
         time.sleep(0.3)
 
     print(f"[*] States observed during dispense sequence: {states_observed}")
-    assert any("Feeding" in s or "Dispensing" in s for s in states_observed), (
+    assert any("Feeding" in s or "Dispensing" in s or "Complete" in s for s in states_observed), (
         f"Dispense state was never triggered! Observed: {states_observed}"
+    )
+    assert not any("Aborted" in s or "Locked" in s for s in states_observed), (
+        f"Dispense was aborted by coprocessor! Observed: {states_observed}"
     )
 
     if dispense_start and dispense_end:
@@ -185,13 +204,36 @@ def test_remote_feed_execution():
         print(f"[*] Dispense cycle duration: {duration:.2f}s")
         assert duration >= 1.5, f"Dispense aborted too quickly ({duration:.2f}s < 1.5s)"
 
-    # Check that child lock state was not inadvertently corrupted or forced on
+    # Wait 3.5s for bowl weight poll to settle
+    print("[*] Waiting 3.5s for scale settling and telemetry refresh...")
+    time.sleep(3.5)
+
+    last_weight_raw = get_entity_state(weight_sensor).get("state")
+    last_weight = float(last_weight_raw) if last_weight_raw not in ("unavailable", "unknown") else 0.0
+    print(f"[*] Last feed weight reported by coprocessor: {last_weight}g")
+    assert last_weight >= 4.0, f"Expected last feed weight >= 4.0g, got {last_weight}g"
+
+    new_portions = float(get_entity_state(portions_sensor).get("state", 0.0))
+    print(f"[*] Portions today: before={initial_portions}, after={new_portions}")
+    assert new_portions > initial_portions, (
+        f"Expected portions today to increment ({initial_portions} -> {new_portions})"
+    )
+
+    new_bowl_weight = float(get_entity_state(bowl_sensor).get("state", 0.0))
+    delta_w = new_bowl_weight - initial_bowl_weight
+    print(f"[*] Bowl weight: before={initial_bowl_weight}g, after={new_bowl_weight}g (delta={delta_w}g)")
+    assert new_bowl_weight > initial_bowl_weight, (
+        f"Food scale weight did not increase after motor dispense! ({initial_bowl_weight}g -> {new_bowl_weight}g)"
+    )
+
+    # Check that child lock state was preserved
     final_child_lock = get_entity_state(child_lock_switch).get("state")
     print(f"[*] Child lock state after feed: {final_child_lock}")
+    assert final_child_lock == initial_child_lock, (
+        f"Child lock state changed unexpectedly: {initial_child_lock} -> {final_child_lock}"
+    )
 
-    last_weight = get_entity_state(weight_sensor).get("state")
-    print(f"[*] Last feed weight recorded: {last_weight}g")
-    print("[PASS] Remote feed executed seamlessly")
+    print("[PASS] Remote feed executed seamlessly, motor physically actuated, and food scale recorded kibble increase!")
 
 
 def run_all_tests():

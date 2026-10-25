@@ -154,6 +154,8 @@ binary_sensor:
       name: "Motor Jammed"
     bowl_connected:
       name: "Bowl Scale Connected"
+    battery_installed:
+      name: "Battery Installed"
 
 text_sensor:
   - platform: ppf_r361s

@@ -16,6 +16,7 @@ CONF_POWER_ADAPTER = "power_adapter"
 CONF_FOOD_LOW = "food_low"
 CONF_MOTOR_JAMMED = "motor_jammed"
 CONF_BOWL_CONNECTED = "bowl_connected"
+CONF_BATTERY_INSTALLED = "battery_installed"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -38,6 +39,10 @@ CONFIG_SCHEMA = cv.Schema(
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
             icon="mdi:tray",
         ),
+        cv.Optional(CONF_BATTERY_INSTALLED): binary_sensor.binary_sensor_schema(
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            icon="mdi:battery-alert",
+        ),
     }
 )
 
@@ -56,3 +61,6 @@ async def to_code(config):
     if bowl_connected_config := config.get(CONF_BOWL_CONNECTED):
         sens = await binary_sensor.new_binary_sensor(bowl_connected_config)
         cg.add(hub.set_bowl_connected_sensor(sens))
+    if battery_installed_config := config.get(CONF_BATTERY_INSTALLED):
+        sens = await binary_sensor.new_binary_sensor(battery_installed_config)
+        cg.add(hub.set_battery_installed_sensor(sens))

@@ -106,6 +106,7 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   void set_food_low_sensor(binary_sensor::BinarySensor *s) { this->food_low_sensor_ = s; }
   void set_motor_jammed_sensor(binary_sensor::BinarySensor *s) { this->motor_jammed_sensor_ = s; }
   void set_bowl_connected_sensor(binary_sensor::BinarySensor *s) { this->bowl_connected_sensor_ = s; }
+  void set_battery_installed_sensor(binary_sensor::BinarySensor *s) { this->battery_installed_sensor_ = s; }
 
   // Entity setters - Text Sensors
   void set_status_text_sensor(text_sensor::TextSensor *s) { this->status_text_sensor_ = s; }
@@ -197,10 +198,10 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   int last_scheduled_minute_{-1};
   bool is_dispensing_{false};
   uint32_t dispense_start_time_{0};
+  uint32_t last_feed_complete_time_{0};
   uint16_t dispense_requested_portions_{1};
-  uint32_t dispense_target_duration_ms_{3200};
-  uint32_t dispense_timeout_ms_{10000};
-  bool dispense_stop_sent_{false};
+  uint32_t dispense_timeout_ms_{25000};
+  bool restore_child_lock_after_feed_{false};
   bool emergency_stop_triggered_{false};
   uint32_t emergency_stop_time_{0};
   uint16_t last_mcu_total_portions_{0};
@@ -229,6 +230,7 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   binary_sensor::BinarySensor *food_low_sensor_{nullptr};
   binary_sensor::BinarySensor *motor_jammed_sensor_{nullptr};
   binary_sensor::BinarySensor *bowl_connected_sensor_{nullptr};
+  binary_sensor::BinarySensor *battery_installed_sensor_{nullptr};
 
   text_sensor::TextSensor *status_text_sensor_{nullptr};
   text_sensor::TextSensor *next_meal_sensor_{nullptr};

@@ -79,34 +79,26 @@ void PPFR361SComponent::loop() {
     this->poll_status_();
   }
 
-  // Hardware Watchdog / Safety Cutoff: prevents runaway dispensing loop
+  // Hardware Watchdog / Safety Cutoff: only triggers if coprocessor motor fails to complete
   if (this->is_dispensing_) {
     uint32_t elapsed = now_ms - this->dispense_start_time_;
 
-    // Phase 1: Target portion duration elapsed -> send graceful stop command
-    if (!this->dispense_stop_sent_ && elapsed >= this->dispense_target_duration_ms_) {
-      this->dispense_stop_sent_ = true;
-      ESP_LOGI(TAG, "Portion target duration (%lu ms for %d portion(s)) elapsed. Commanding motor stop...",
-               (unsigned long)elapsed, this->dispense_requested_portions_);
-      std::vector<std::pair<uint8_t, std::vector<uint8_t>>> stop_items;
-      stop_items.push_back({1, {0x00, 0x00}});
-      stop_items.push_back({2, {0x00, 0x00}});
-      stop_items.push_back({3, {0x00}});
-      this->send_frame_(0x02, OPCODE_FEED_CMD, 0x00, stop_items);
-    }
-
-    // Phase 2: Safety cutoff if motor continues beyond timeout
     if (elapsed > this->dispense_timeout_ms_) {
       ESP_LOGE(TAG, "EMERGENCY SAFETY CUTOFF: Dispense duration (%lu ms) exceeded timeout (%lu ms)! Forcing motor halt...",
                (unsigned long)elapsed, (unsigned long)this->dispense_timeout_ms_);
       this->is_dispensing_ = false;
 
-      // 1. Send stop command again
+      // 1. Send stop command with 0x22
       std::vector<std::pair<uint8_t, std::vector<uint8_t>>> stop_items;
       stop_items.push_back({1, {0x00, 0x00}});
       stop_items.push_back({2, {0x00, 0x00}});
       stop_items.push_back({3, {0x00}});
-      this->send_frame_(0x02, OPCODE_FEED_CMD, 0x00, stop_items);
+      this->send_frame_(0x22, OPCODE_FEED_CMD, 0x00, stop_items);
+
+      if (this->restore_child_lock_after_feed_) {
+        this->restore_child_lock_after_feed_ = false;
+        this->send_frame_(0x22, OPCODE_CHILD_LOCK, 0x00, {{1, {0x01}}});
+      }
 
       // 2. Set emergency interlock to reboot coprocessor MCU (0x5141) if motor continues
       this->emergency_stop_triggered_ = true;
@@ -121,7 +113,7 @@ void PPFR361SComponent::loop() {
   if (this->emergency_stop_triggered_ && (now_ms - this->emergency_stop_time_ > 1500)) {
     this->emergency_stop_triggered_ = false;
     ESP_LOGW(TAG, "Dispense failsafe: rebooting coprocessor MCU via 0x5141 to cut motor PWM");
-    this->send_frame_(0x02, OPCODE_REBOOT_MCU, 0x00, {});
+    this->send_frame_(0x22, OPCODE_REBOOT_MCU, 0x00, {});
   }
 
   // Calibration Settling State Handler (measures settled kibble weight after 3s)
@@ -353,15 +345,24 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
           this->food_low_sensor_->publish_state(food_low);
       }
 
-      // Key 14 (0x0E): battery_percent (0-100%, verified against stock ELF 0x4200ba76)
-      if (klv.count(14) && !klv.at(14).empty()) {
-        uint8_t bat = klv.at(14)[0];
-        if (bat <= 100 && this->battery_level_sensor_ != nullptr)
-          this->battery_level_sensor_->publish_state(static_cast<float>(bat));
-      } else if (klv.count(5) && !klv.at(5).empty()) {
+      // Key 5: battery_percent (0 = not installed / absent, 1-100% installed)
+      if (klv.count(5) && !klv.at(5).empty()) {
         uint8_t bat = klv.at(5)[0];
-        if (bat > 0 && bat <= 100 && this->battery_level_sensor_ != nullptr)
-          this->battery_level_sensor_->publish_state(static_cast<float>(bat));
+        bool installed = (bat > 0 && bat <= 100);
+        if (this->battery_installed_sensor_ != nullptr)
+          this->battery_installed_sensor_->publish_state(installed);
+        if (this->battery_level_sensor_ != nullptr) {
+          if (installed) {
+            this->battery_level_sensor_->publish_state(static_cast<float>(bat));
+          } else {
+            this->battery_level_sensor_->publish_state(NAN);
+          }
+        }
+      } else {
+        if (this->battery_installed_sensor_ != nullptr)
+          this->battery_installed_sensor_->publish_state(false);
+        if (this->battery_level_sensor_ != nullptr)
+          this->battery_level_sensor_->publish_state(NAN);
       }
 
       // Update desiccant days remaining (30-day countdown matching stock APK)
@@ -418,8 +419,9 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
           this->bowl_connected_sensor_->publish_state(true);
       }
 
-      // Only publish Online / Standby if not currently dispensing or calibrating
-      if (!this->is_dispensing_ && this->calib_state_ == CALIB_IDLE) {
+      // Only publish Online / Standby if not currently dispensing, calibrating, or holding completion status
+      if (!this->is_dispensing_ && this->calib_state_ == CALIB_IDLE &&
+          (millis() - this->last_feed_complete_time_ >= 5000)) {
         if (this->status_text_sensor_ != nullptr)
           this->status_text_sensor_->publish_state("Online / Standby");
       }
@@ -428,7 +430,6 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
 
     case OPCODE_DISPENSE_RESULT: { // 0x5596 - Dispense Complete Telemetry
       this->is_dispensing_ = false;
-      this->dispense_stop_sent_ = true;
       this->emergency_stop_triggered_ = false;
       uint16_t mcu_total = 0;
       uint8_t code = 0;
@@ -442,6 +443,13 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
         code = klv.at(3)[0];
 
       ESP_LOGI(TAG, "Feed result: weight=%dg, code=0x%02X", mcu_total, code);
+
+      // Restore child lock if it was temporarily disengaged for remote feeding
+      if (this->restore_child_lock_after_feed_) {
+        this->restore_child_lock_after_feed_ = false;
+        ESP_LOGI(TAG, "Restoring child lock to ON following remote dispense completion");
+        this->send_frame_(0x22, OPCODE_CHILD_LOCK, 0x00, {{1, {0x01}}});
+      }
 
       if (mcu_total == 0 && (code & 0x01) == 0) {
         ESP_LOGW(TAG, "Feed reported 0g dispensed (coprocessor locked or feed aborted).");
@@ -491,6 +499,17 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
         }
         if (this->motor_jammed_sensor_ != nullptr)
           this->motor_jammed_sensor_->publish_state(false);
+
+        this->last_feed_complete_time_ = millis();
+        this->set_timeout("feed_complete_reset", 5000, [this]() {
+          if (!this->is_dispensing_ && this->calib_state_ == CALIB_IDLE && this->status_text_sensor_ != nullptr) {
+            this->status_text_sensor_->publish_state("Online / Standby");
+          }
+        });
+
+        this->set_timeout("bowl_refresh", 2000, [this]() {
+          this->poll_status_();
+        });
       } else if (code == 1 || (code & 0x02)) {
         ESP_LOGE(TAG, "FEED ERROR: Motor Jammed!");
         if (this->motor_jammed_sensor_ != nullptr)
@@ -526,9 +545,11 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
       break;
     }
 
-    case OPCODE_TARE_BOWL: { // 0x55A3 - Tare ACK
+    case OPCODE_TARE_BOWL: { // 0x55A3 - Tare Result
       uint8_t result = status;
-      if (klv.count(1) && !klv.at(1).empty()) {
+      if (klv.count(2) && !klv.at(2).empty()) {
+        result = klv.at(2)[0];
+      } else if (klv.count(1) && !klv.at(1).empty()) {
         result = klv.at(1)[0];
       }
       if (result == 0) {
@@ -567,6 +588,10 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
         if (this->status_text_sensor_ != nullptr)
           this->status_text_sensor_->publish_state("Tare Failed");
       }
+
+      this->set_timeout("tare_poll", 800, [this]() {
+        this->poll_status_();
+      });
       break;
     }
 
@@ -584,7 +609,7 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
         static_cast<uint8_t>((epoch_sec >> 16) & 0xFF),
         static_cast<uint8_t>((epoch_sec >> 24) & 0xFF)
       }});
-      this->send_frame_(0x02, OPCODE_CLOCK_REQ, 0x00, items);
+      this->send_frame_(0x22, OPCODE_CLOCK_REQ, 0x00, items);
       break;
     }
 
@@ -618,47 +643,65 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
 }
 
 void PPFR361SComponent::poll_status_() {
-  // Opcode 0x5592: Device Status Query
-  this->send_frame_(0x02, OPCODE_STATUS_POLL, 0x00, {});
+  // Opcode 0x5592: Device Status Query (Frame type 0x22 matching stock master commands)
+  this->send_frame_(0x22, OPCODE_STATUS_POLL, 0x00, {});
 }
 
 void PPFR361SComponent::feed(uint16_t portions, bool sound) {
   if (portions == 0) portions = 1;
   if (portions > 20) portions = 20;
 
-  ESP_LOGI(TAG, "Dispensing %d portion(s)...", portions);
+  float grams_per_portion = this->storage_.grams_per_portion > 0 ? this->storage_.grams_per_portion : 8.0f;
+  uint16_t target_weight = static_cast<uint16_t>(std::round(portions * grams_per_portion));
+  if (target_weight < 8) {
+    target_weight = 8;
+  }
+  uint8_t feed_type = 0;
+
+  ESP_LOGI(TAG, "Dispensing %d portion(s) (target %dg, type %d)...", portions, target_weight, feed_type);
   this->is_dispensing_ = true;
   this->dispense_start_time_ = millis();
   this->dispense_requested_portions_ = portions;
-  this->dispense_target_duration_ms_ = static_cast<uint32_t>(portions) * 3200;
-  this->dispense_timeout_ms_ = this->dispense_target_duration_ms_ + 4000;
-  this->dispense_stop_sent_ = false;
+  this->dispense_timeout_ms_ = 25000;
   this->emergency_stop_triggered_ = false;
 
   if (this->status_text_sensor_ != nullptr && this->calib_state_ == CALIB_IDLE)
     this->status_text_sensor_->publish_state("Feeding...");
 
+  // Interlock bypass: If child lock is active on the coprocessor, temporarily disengage it over UART
+  // so remote feeding succeeds seamlessly without requiring physical interaction with the feeder button.
+  if (this->child_lock_switch_ != nullptr && this->child_lock_switch_->state) {
+    ESP_LOGI(TAG, "Child lock is ON: Temporarily unlocking coprocessor MCU via 0x5140 (00)...");
+    this->restore_child_lock_after_feed_ = true;
+    this->send_frame_(0x22, OPCODE_CHILD_LOCK, 0x00, {{1, {0x00}}});
+    delay(60);
+  } else {
+    this->restore_child_lock_after_feed_ = false;
+  }
+
   // Exact 3 keys matching stock protocol (pet_feeder_uart_set_food_output / executeGrain):
-  // frame_type: 0x02 (SC95F protocol master request)
-  // Key 1 (2B): Portions (uint16_t LE)
+  // frame_type: 0x22 (SC95F protocol master request with ACK flag)
+  // Key 1 (2B): Target Weight in Grams (uint16_t LE)
   // Key 2 (2B): Cutoff limit (0x0000)
   // Key 3 (1B): Feed Type (0 = remote meal command matching stock executeGrain)
-  uint16_t target_weight = 0;
-  uint8_t feed_type = 0;
-
-  ESP_LOGI(TAG, "Sending food output command (0x5590): portions=%d, target=%dg, type=%d (target_duration=%lu ms)...",
-           portions, target_weight, feed_type, (unsigned long)this->dispense_target_duration_ms_);
+  ESP_LOGI(TAG, "Sending food output command (0x5590): target=%dg, cutoff=0g, type=%d...",
+           target_weight, feed_type);
   std::vector<std::pair<uint8_t, std::vector<uint8_t>>> items;
-  items.push_back({1, {static_cast<uint8_t>(portions & 0xFF), static_cast<uint8_t>((portions >> 8) & 0xFF)}});
-  items.push_back({2, {static_cast<uint8_t>(target_weight & 0xFF), static_cast<uint8_t>((target_weight >> 8) & 0xFF)}});
+  items.push_back({1, {static_cast<uint8_t>(target_weight & 0xFF), static_cast<uint8_t>((target_weight >> 8) & 0xFF)}});
+  items.push_back({2, {0x00, 0x00}});
   items.push_back({3, {feed_type}});
 
-  this->send_frame_(0x02, OPCODE_FEED_CMD, 0x00, items);
+  this->send_frame_(0x22, OPCODE_FEED_CMD, 0x00, items);
 }
 
 void PPFR361SComponent::tare_bowl() {
   ESP_LOGI(TAG, "Zeroing bowl scale...");
-  this->send_frame_(0x02, OPCODE_TARE_BOWL, 0x00, {});
+  this->send_frame_(0x22, OPCODE_TARE_BOWL, 0x00, {});
+  if (this->bowl_weight_sensor_ != nullptr)
+    this->bowl_weight_sensor_->publish_state(0.0f);
+  this->set_timeout("tare_refresh", 1500, [this]() {
+    this->poll_status_();
+  });
 }
 
 void PPFR361SComponent::reset_desiccant() {
@@ -692,7 +735,7 @@ void PPFR361SComponent::set_child_lock(bool locked) {
   ESP_LOGI(TAG, "Setting child lock: %s", locked ? "ON" : "OFF");
   std::vector<std::pair<uint8_t, std::vector<uint8_t>>> items;
   items.push_back({1, {static_cast<uint8_t>(locked ? 1 : 0)}});
-  this->send_frame_(0x02, OPCODE_CHILD_LOCK, 0x00, items);
+  this->send_frame_(0x22, OPCODE_CHILD_LOCK, 0x00, items);
   if (this->child_lock_switch_ != nullptr)
     this->child_lock_switch_->publish_state(locked);
 }
@@ -701,7 +744,7 @@ void PPFR361SComponent::set_slow_feed(bool slow) {
   ESP_LOGI(TAG, "Setting slow feed mode: %s", slow ? "ON" : "OFF");
   std::vector<std::pair<uint8_t, std::vector<uint8_t>>> items;
   items.push_back({1, {static_cast<uint8_t>(slow ? 1 : 0)}});
-  this->send_frame_(0x02, OPCODE_SLOW_FEED, 0x00, items);
+  this->send_frame_(0x22, OPCODE_SLOW_FEED, 0x00, items);
   if (this->slow_feed_switch_ != nullptr)
     this->slow_feed_switch_->publish_state(slow);
 }
@@ -711,7 +754,7 @@ void PPFR361SComponent::set_sleep_mode(bool sleep) {
   std::vector<std::pair<uint8_t, std::vector<uint8_t>>> items;
   items.push_back({1, {static_cast<uint8_t>(sleep ? 1 : 0)}});
   items.push_back({2, {0x00}});
-  this->send_frame_(0x02, OPCODE_SLEEP_MODE, 0x00, items);
+  this->send_frame_(0x22, OPCODE_SLEEP_MODE, 0x00, items);
   if (this->sleep_mode_switch_ != nullptr)
     this->sleep_mode_switch_->publish_state(sleep);
 }
@@ -719,7 +762,7 @@ void PPFR361SComponent::set_sleep_mode(bool sleep) {
 void PPFR361SComponent::set_wifi_led(uint8_t mode) {
   std::vector<std::pair<uint8_t, std::vector<uint8_t>>> items;
   items.push_back({1, {mode}});
-  this->send_frame_(0x02, OPCODE_WIFI_LED, 0x00, items);
+  this->send_frame_(0x22, OPCODE_WIFI_LED, 0x00, items);
 }
 
 void PPFR361SComponent::sync_clock(uint32_t epoch_sec) {
@@ -738,7 +781,7 @@ void PPFR361SComponent::sync_clock(uint32_t epoch_sec) {
     static_cast<uint8_t>((epoch_sec >> 16) & 0xFF),
     static_cast<uint8_t>((epoch_sec >> 24) & 0xFF)
   }});
-  this->send_frame_(0x02, OPCODE_CLOCK_SYNC, 0x00, items);
+  this->send_frame_(0x22, OPCODE_CLOCK_SYNC, 0x00, items);
 
   // Auto-sync active schedule to coprocessor following clock sync
   this->sync_schedules_to_coprocessor();
