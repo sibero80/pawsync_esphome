@@ -195,7 +195,9 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   bool is_dispensing_{false};
   uint32_t dispense_start_time_{0};
   uint16_t dispense_requested_portions_{1};
+  uint32_t dispense_target_duration_ms_{3200};
   uint32_t dispense_timeout_ms_{10000};
+  bool dispense_stop_sent_{false};
   bool emergency_stop_triggered_{false};
   uint32_t emergency_stop_time_{0};
   bool restore_child_lock_after_feed_{false};

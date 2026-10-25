@@ -77,12 +77,26 @@ void PPFR361SComponent::loop() {
   // Hardware Watchdog / Safety Cutoff: prevents runaway dispensing loop
   if (this->is_dispensing_) {
     uint32_t elapsed = now_ms - this->dispense_start_time_;
+
+    // Phase 1: Target portion duration elapsed -> send graceful stop command
+    if (!this->dispense_stop_sent_ && elapsed >= this->dispense_target_duration_ms_) {
+      this->dispense_stop_sent_ = true;
+      ESP_LOGI(TAG, "Portion target duration (%lu ms for %d portion(s)) elapsed. Commanding motor stop...",
+               (unsigned long)elapsed, this->dispense_requested_portions_);
+      std::vector<std::pair<uint8_t, std::vector<uint8_t>>> stop_items;
+      stop_items.push_back({1, {0x00, 0x00}});
+      stop_items.push_back({2, {0x00, 0x00}});
+      stop_items.push_back({3, {0x00}});
+      this->send_frame_(0x02, OPCODE_FEED_CMD, 0x00, stop_items);
+    }
+
+    // Phase 2: Safety cutoff if motor continues beyond timeout
     if (elapsed > this->dispense_timeout_ms_) {
-      ESP_LOGE(TAG, "EMERGENCY SAFETY CUTOFF: Dispense duration (%lu ms) exceeded timeout (%lu ms)! Stopping motor...",
+      ESP_LOGE(TAG, "EMERGENCY SAFETY CUTOFF: Dispense duration (%lu ms) exceeded timeout (%lu ms)! Forcing motor halt...",
                (unsigned long)elapsed, (unsigned long)this->dispense_timeout_ms_);
       this->is_dispensing_ = false;
 
-      // 1. Send 0x5590 with 0 portions to command motor halt
+      // 1. Send stop command again
       std::vector<std::pair<uint8_t, std::vector<uint8_t>>> stop_items;
       stop_items.push_back({1, {0x00, 0x00}});
       stop_items.push_back({2, {0x00, 0x00}});
@@ -394,6 +408,7 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
 
     case OPCODE_DISPENSE_RESULT: { // 0x5596 - Dispense Complete Telemetry
       this->is_dispensing_ = false;
+      this->dispense_stop_sent_ = true;
       this->emergency_stop_triggered_ = false;
       uint16_t mcu_total = 0;
       uint8_t code = 0;
@@ -413,35 +428,28 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
         this->set_child_lock(true);
       }
 
-      // Calculate portion delta from coprocessor cumulative counter
-      uint16_t delta_portions = 0;
-      if (mcu_total > 0) {
-        if (!this->mcu_total_initialized_) {
-          this->mcu_total_initialized_ = true;
-          this->last_mcu_total_portions_ = mcu_total;
-          delta_portions = this->dispense_requested_portions_ > 0 ? this->dispense_requested_portions_ : 1;
-        } else {
-          if (mcu_total >= this->last_mcu_total_portions_) {
-            delta_portions = mcu_total - this->last_mcu_total_portions_;
-          } else {
-            delta_portions = mcu_total; // Rollover
-          }
-          this->last_mcu_total_portions_ = mcu_total;
+      ESP_LOGI(TAG, "Feed result: weight=%dg, code=0x%02X", mcu_total, code);
+
+      if (mcu_total == 0 && (code & 0x01) == 0) {
+        ESP_LOGW(TAG, "Feed reported 0g dispensed (coprocessor locked or feed aborted).");
+        this->dispense_requested_portions_ = 0;
+        if (this->calib_state_ == CALIB_DISPENSING) {
+          ESP_LOGE(TAG, "Calibration failed: Coprocessor locked or 0g dispensed!");
+          this->calib_state_ = CALIB_IDLE;
+          if (this->status_text_sensor_ != nullptr)
+            this->status_text_sensor_->publish_state("Calibration Failed: Locked / 0g");
+        } else if (this->status_text_sensor_ != nullptr && this->calib_state_ == CALIB_IDLE) {
+          this->status_text_sensor_->publish_state("Feed Aborted (0g / Locked)");
         }
+        break;
       }
 
-      // If delta_portions is still 0 on successful dispense (e.g. mcu_total was 0 on pulse mode),
-      // attribute the requested portions (or 1 for physical button press)
-      if (delta_portions == 0 && code == 0) {
-        delta_portions = this->dispense_requested_portions_ > 0 ? this->dispense_requested_portions_ : 1;
-      }
+      uint16_t delta_portions = this->dispense_requested_portions_ > 0 ? this->dispense_requested_portions_ : 1;
       this->dispense_requested_portions_ = 0;
-
-      ESP_LOGI(TAG, "Feed result: delta_portions=%d (mcu_total=%d), code=%d", delta_portions, mcu_total, code);
 
       // Handle Portion Calibration State Machine
       if (this->calib_state_ == CALIB_DISPENSING) {
-        if (code == 0) {
+        if (code == 0 || (code & 0x01)) {
           ESP_LOGI(TAG, "Calibration test dispense finished (%d portions). Waiting 3s for load cell settling...", delta_portions);
           this->calib_state_ = CALIB_SETTLING;
           this->calib_timer_ = millis();
@@ -455,32 +463,28 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
         }
       }
 
-      if (code == 0) {
+      if (code == 0 || (code & 0x01)) {
         if (delta_portions > 0) {
           this->portions_today_ += delta_portions;
           if (this->portions_today_sensor_ != nullptr)
             this->portions_today_sensor_->publish_state(this->portions_today_);
 
-          float grams = static_cast<float>(delta_portions) * this->storage_.grams_per_portion;
+          float grams = mcu_total > 0 ? static_cast<float>(mcu_total) : (static_cast<float>(delta_portions) * this->storage_.grams_per_portion);
           if (this->last_feed_weight_sensor_ != nullptr)
             this->last_feed_weight_sensor_->publish_state(grams);
 
           if (this->status_text_sensor_ != nullptr && this->calib_state_ == CALIB_IDLE)
             this->status_text_sensor_->publish_state("Feeding Complete");
-        } else {
-          ESP_LOGW(TAG, "Feed reported 0 portions dispensed (coprocessor aborted or child locked)");
-          if (this->status_text_sensor_ != nullptr && this->calib_state_ == CALIB_IDLE)
-            this->status_text_sensor_->publish_state("Feed Aborted (0p)");
         }
         if (this->motor_jammed_sensor_ != nullptr)
           this->motor_jammed_sensor_->publish_state(false);
-      } else if (code == 1) {
+      } else if (code == 1 || (code & 0x02)) {
         ESP_LOGE(TAG, "FEED ERROR: Motor Jammed!");
         if (this->motor_jammed_sensor_ != nullptr)
           this->motor_jammed_sensor_->publish_state(true);
         if (this->status_text_sensor_ != nullptr)
           this->status_text_sensor_->publish_state("Motor Jammed");
-      } else if (code == 2) {
+      } else if (code == 2 || (code & 0x04)) {
         ESP_LOGW(TAG, "FEED WARNING: Chute Blocked!");
         if (this->status_text_sensor_ != nullptr)
           this->status_text_sensor_->publish_state("Outlet Blocked");
@@ -608,22 +612,31 @@ void PPFR361SComponent::feed(uint16_t portions, bool sound) {
   this->is_dispensing_ = true;
   this->dispense_start_time_ = millis();
   this->dispense_requested_portions_ = portions;
-  this->dispense_timeout_ms_ = static_cast<uint32_t>(portions) * 4000 + 8000;
+  this->dispense_target_duration_ms_ = static_cast<uint32_t>(portions) * 3200;
+  this->dispense_timeout_ms_ = this->dispense_target_duration_ms_ + 4000;
+  this->dispense_stop_sent_ = false;
   this->emergency_stop_triggered_ = false;
 
   if (this->status_text_sensor_ != nullptr && this->calib_state_ == CALIB_IDLE)
     this->status_text_sensor_->publish_state("Feeding...");
 
-  // Exact 3 keys matching executeGrain (0x4200439e) in stock app_active.elf:
+  // If child lock is active, temporarily bypass it for this manual feed request
+  if (this->child_lock_switch_ != nullptr && this->child_lock_switch_->state) {
+    ESP_LOGI(TAG, "Child lock active: temporarily unlocking for remote feed...");
+    this->restore_child_lock_after_feed_ = true;
+    this->set_child_lock(false);
+  }
+
+  // Exact 3 keys matching stock protocol:
   // frame_type: 0x02 (SC95F protocol master request)
   // Key 1 (2B): Portions (uint16_t LE)
   // Key 2 (2B): Cutoff limit (0x0000)
-  // Key 3 (1B): Feed Type (0 = manual executeGrain by rotation pulses; 1 is scheduled meal)
+  // Key 3 (1B): Feed Type (1 = meal trigger with active motor PWM; 0 = manual/idle)
   uint16_t target_weight = 0;
-  uint8_t feed_type = 0;
+  uint8_t feed_type = 1;
 
-  ESP_LOGI(TAG, "Sending food output command (0x5590): portions=%d, target=%dg, type=%d...",
-           portions, target_weight, feed_type);
+  ESP_LOGI(TAG, "Sending food output command (0x5590): portions=%d, target=%dg, type=%d (target_duration=%lu ms)...",
+           portions, target_weight, feed_type, (unsigned long)this->dispense_target_duration_ms_);
   std::vector<std::pair<uint8_t, std::vector<uint8_t>>> items;
   items.push_back({1, {static_cast<uint8_t>(portions & 0xFF), static_cast<uint8_t>((portions >> 8) & 0xFF)}});
   items.push_back({2, {static_cast<uint8_t>(target_weight & 0xFF), static_cast<uint8_t>((target_weight >> 8) & 0xFF)}});
