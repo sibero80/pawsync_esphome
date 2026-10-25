@@ -40,12 +40,53 @@ api:
   encryption:
     key: !secret api_encryption_key
   services:
+    # Service: Feed immediately with custom portion count (1..20)
     - service: feed
       variables:
         portions: int
       then:
         - lambda: |-
             id(feeder_bridge).feed(portions, true);
+
+    # Service: Trigger stock single-meal kibble density calibration (opcode 0x5599)
+    - service: measure_meal_stock
+      then:
+        - lambda: |-
+            id(feeder_bridge).start_stock_measuring();
+
+    # Service: Configure on-device meal schedule (7 plans x 10 meals)
+    # plan: 1..7 (or 0 for active plan)
+    # meal: 1..10 (meal slot)
+    # enabled: true/false
+    # hour: 0..23, minute: 0..59
+    # portions: 1..20
+    # days: bitmask (127=Daily, 62=Mon-Fri, 65=Sat-Sun)
+    # sound: true/false
+    - service: set_meal_schedule
+      variables:
+        plan: int
+        meal: int
+        enabled: bool
+        hour: int
+        minute: int
+        portions: int
+        days: int
+        sound: bool
+      then:
+        - lambda: |-
+            uint8_t p = (plan >= 1 && plan <= 7) ? (plan - 1) : id(feeder_bridge).get_active_plan();
+            uint8_t m = (meal >= 1 && meal <= 10) ? (meal - 1) : 0;
+            uint8_t d = (days > 0) ? days : 0x7F;
+            id(feeder_bridge).set_meal_schedule(p, m, enabled, hour, minute, portions, d, sound);
+
+    # Service: Clear all meals in a plan
+    - service: clear_plan
+      variables:
+        plan: int
+      then:
+        - lambda: |-
+            uint8_t p = (plan >= 1 && plan <= 7) ? (plan - 1) : id(feeder_bridge).get_active_plan();
+            id(feeder_bridge).clear_plan(p);
 
 ota:
   - platform: esphome

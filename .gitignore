@@ -1,5 +1,18 @@
-.omg/
-.esphome/
-work/
+# Secrets and Credentials
 secrets.yaml
+
+# Build & Runtime Artifacts
+.esphome/
+.omg/
+work/
 __pycache__/
+*.pyc
+*.pyo
+*.log
+.pytest_cache/
+
+# Editor and OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

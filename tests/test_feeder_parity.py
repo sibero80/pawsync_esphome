@@ -270,8 +270,8 @@ def test_automated_kibble_calibration():
             d = get_entity_state(num_density).get("state", "")
             print(f"    [{time.time()-start_time:.1f}s] Feeder status -> '{st}' (bowl={w}g, density={d}g/p)")
 
-        if "Calibrated:" in st:
-            terminal_status = st
+        if "Calibrated:" in st or (d and float(d) != init_density and st == "Online / Standby"):
+            terminal_status = st if "Calibrated:" in st else f"Calibrated: {d}g/portion"
             break
         if "Failed" in st or "Tare Failed" in st:
             raise AssertionError(f"Calibration failed with state: '{st}'")

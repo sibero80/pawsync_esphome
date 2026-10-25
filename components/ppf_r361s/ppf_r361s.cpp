@@ -37,7 +37,9 @@ void PPFR361SComponent::setup() {
 
   // Initialize baseline sensor states so Home Assistant entities are immediately populated
   if (this->battery_level_sensor_ != nullptr)
-    this->battery_level_sensor_->publish_state(100.0f);
+    this->battery_level_sensor_->publish_state(NAN);
+  if (this->battery_installed_sensor_ != nullptr)
+    this->battery_installed_sensor_->publish_state(false);
   if (this->bowl_weight_sensor_ != nullptr)
     this->bowl_weight_sensor_->publish_state(0.0f);
   if (this->power_adapter_sensor_ != nullptr)
@@ -465,13 +467,22 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
         break;
       }
 
+      // In stock firmware (pet_feeder_food_output_situation_handle_klv):
+      // Key 2 in 0x5596 is 'food_output_weight' (actual grams dispensed by coprocessor load cell)
+      uint16_t grams_dispensed = mcu_total;
+      float grams_per_portion = this->storage_.grams_per_portion > 0 ? this->storage_.grams_per_portion : 8.0f;
       uint16_t delta_portions = this->dispense_requested_portions_ > 0 ? this->dispense_requested_portions_ : 1;
+      if (grams_dispensed > 0 && grams_per_portion > 0 && this->calib_state_ == CALIB_IDLE) {
+        delta_portions = static_cast<uint16_t>(std::round(static_cast<float>(grams_dispensed) / grams_per_portion));
+        if (delta_portions == 0) delta_portions = 1;
+      }
       this->dispense_requested_portions_ = 0;
 
       // Handle Portion Calibration State Machine
       if (this->calib_state_ == CALIB_DISPENSING) {
         if (code == 0 || (code & 0x01)) {
-          ESP_LOGI(TAG, "Calibration test dispense finished (%d portions). Waiting 3.5s for load cell settling...", delta_portions);
+          ESP_LOGI(TAG, "Calibration test dispense finished (%dg reported for %d test portions). Waiting 3.5s for load cell settling...",
+                   grams_dispensed, this->calib_portions_);
           this->calib_state_ = CALIB_SETTLING;
           this->calib_timer_ = millis();
           if (this->status_text_sensor_ != nullptr)
@@ -505,7 +516,10 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
         this->last_feed_complete_time_ = millis();
         this->set_timeout("feed_complete_reset", 5000, [this]() {
           if (!this->is_dispensing_ && this->calib_state_ == CALIB_IDLE && this->status_text_sensor_ != nullptr) {
-            this->status_text_sensor_->publish_state("Online / Standby");
+            std::string cur = this->status_text_sensor_->state;
+            if (cur.find("Calibrated:") == std::string::npos) {
+              this->status_text_sensor_->publish_state("Online / Standby");
+            }
           }
         });
 
@@ -606,6 +620,53 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
       break;
     }
 
+    case OPCODE_MEASURING: { // 0x5599 - Coprocessor Native Meal Calibration Telemetry
+      if (klv.empty()) {
+        ESP_LOGI(TAG, "Coprocessor ACKed measuring opcode (0x5599): status %d", status);
+        break;
+      }
+
+      // In stock firmware (pet_feeder_measuring_feed_handle_klv):
+      // Key 4: measuring_result (0 = success)
+      // Key 2: meal_gram (uint16 LE)
+      // Key 3: serving_cnt (uint16 LE)
+      uint8_t measure_result = status;
+      uint16_t meal_gram = 0;
+      uint16_t serving_cnt = 0;
+
+      if (klv.count(4) && !klv.at(4).empty())
+        measure_result = klv.at(4)[0];
+      if (klv.count(2) && klv.at(2).size() >= 2)
+        meal_gram = klv.at(2)[0] | (static_cast<uint16_t>(klv.at(2)[1]) << 8);
+      else if (klv.count(2) && !klv.at(2).empty())
+        meal_gram = klv.at(2)[0];
+      if (klv.count(3) && klv.at(3).size() >= 2)
+        serving_cnt = klv.at(3)[0] | (static_cast<uint16_t>(klv.at(3)[1]) << 8);
+      else if (klv.count(3) && !klv.at(3).empty())
+        serving_cnt = klv.at(3)[0];
+
+      ESP_LOGI(TAG, "Native measuring telemetry (0x5599): result=%d, gram=%dg, portions=%d",
+               measure_result, meal_gram, serving_cnt);
+
+      if (measure_result == 0 && meal_gram > 0 && serving_cnt > 0) {
+        float calculated_g = static_cast<float>(meal_gram) / static_cast<float>(serving_cnt);
+        ESP_LOGI(TAG, "Stock single meal calibration success: %dg / %d portions = %.2fg/portion",
+                 meal_gram, serving_cnt, calculated_g);
+        this->set_grams_per_portion(calculated_g);
+        if (this->grams_per_portion_number_ != nullptr)
+          this->grams_per_portion_number_->publish_state(calculated_g);
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Calibrated: %.1fg/portion", calculated_g);
+        if (this->status_text_sensor_ != nullptr)
+          this->status_text_sensor_->publish_state(buf);
+      } else if (measure_result != 0) {
+        ESP_LOGW(TAG, "Stock single meal calibration failed (code %d)", measure_result);
+        if (this->status_text_sensor_ != nullptr)
+          this->status_text_sensor_->publish_state("Calibration Failed");
+      }
+      break;
+    }
+
     case OPCODE_CLOCK_REQ: { // 0x5595 - Coprocessor requests timestamp sync
       uint32_t epoch_sec = 0;
       if (this->time_ != nullptr) {
@@ -664,6 +725,10 @@ void PPFR361SComponent::feed(uint16_t portions, bool sound) {
 
   float grams_per_portion = this->storage_.grams_per_portion > 0 ? this->storage_.grams_per_portion : 8.0f;
   uint16_t target_weight = static_cast<uint16_t>(std::round(portions * grams_per_portion));
+  // If calibrating, ensure target_weight is sufficient to dispense all test portions without premature cutoff
+  if (this->calib_state_ == CALIB_DISPENSING) {
+    target_weight = static_cast<uint16_t>(std::round(portions * std::max(grams_per_portion, 11.0f)));
+  }
   if (target_weight < 8) {
     target_weight = 8;
   }
@@ -728,7 +793,7 @@ void PPFR361SComponent::reset_desiccant() {
 }
 
 void PPFR361SComponent::start_portion_calibration(uint16_t portions) {
-  if (portions == 0) portions = 3;
+  if (portions == 0) portions = 2;
   if (portions > 10) portions = 10;
 
   ESP_LOGI(TAG, "Starting Automated Kibble Portion Calibration wizard (%d portions)...", portions);
@@ -876,6 +941,9 @@ void PPFR361SComponent::set_meal_schedule(uint8_t plan_idx, uint8_t meal_idx, bo
   m.days = days;
   m.sound = sound;
 
+  this->storage_.plans[plan_idx].enabled = true;
+  this->storage_.plans[plan_idx].repeat_days = 0x7F;
+
   ESP_LOGI(TAG, "Configured Plan %u Meal %u: %s %02d:%02d (%d portions, days 0x%02X, sound %d)",
            plan_idx + 1, meal_idx + 1, enabled ? "ENABLED" : "DISABLED", hour, minute, portions, days, sound);
   this->save_schedule_to_nvs_();
@@ -904,7 +972,29 @@ void PPFR361SComponent::set_grams_per_portion(float grams) {
     this->storage_.grams_per_portion = grams;
     ESP_LOGI(TAG, "Saved kibble density to NVS: %.2fg/portion", grams);
     this->save_schedule_to_nvs_();
+
+    // Sync to coprocessor EEPROM (matching stock savePetSingleMealMeasure / 0x42009aca):
+    // Opcode 0x5599: Key 1 = 0x00 (save command), Key 2 = single_weight_g (uint16 LE)
+    uint16_t g_int = static_cast<uint16_t>(std::round(grams));
+    this->send_frame_(0x22, OPCODE_MEASURING, 0x00, {
+      {1, {0x00}},
+      {2, {static_cast<uint8_t>(g_int & 0xFF), static_cast<uint8_t>((g_int >> 8) & 0xFF)}}
+    });
   }
+}
+
+void PPFR361SComponent::start_stock_measuring() {
+  ESP_LOGI(TAG, "Sending stock coprocessor single meal measuring command (0x5599)...");
+  if (this->status_text_sensor_ != nullptr)
+    this->status_text_sensor_->publish_state("Calibrating: Measuring kibble density...");
+
+  if (this->child_lock_switch_ != nullptr && this->child_lock_switch_->state) {
+    this->send_frame_(0x22, OPCODE_CHILD_LOCK, 0x00, {{1, {0x00}}});
+    delay(50);
+  }
+
+  // Stock parameters matching startPetSingleMealMeasure: Key 1 = 0x01 (Start measure), Key 5 = 0x00
+  this->send_frame_(0x22, OPCODE_MEASURING, 0x00, {{1, {0x01}}, {5, {0x00}}});
 }
 
 void PPFR361SComponent::clear_plan(uint8_t plan_idx) {
@@ -913,6 +1003,9 @@ void PPFR361SComponent::clear_plan(uint8_t plan_idx) {
     this->storage_.plans[plan_idx].meals[m].enabled = false;
   }
   this->save_schedule_to_nvs_();
+  if (plan_idx == this->storage_.active_plan_idx) {
+    this->update_schedule_sensors_();
+  }
 }
 
 const ScheduleMeal &PPFR361SComponent::get_meal(uint8_t plan_idx, uint8_t meal_idx) const {

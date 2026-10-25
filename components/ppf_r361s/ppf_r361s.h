@@ -1,5 +1,34 @@
 #pragma once
 
+/**
+ * ============================================================================
+ * Pawsync PPF-R361S Smart Pet Feeder - Dual-MCU UART Bridge & Component
+ * ============================================================================
+ * 
+ * Hardware Architecture:
+ * - Master SoC: ESP32-C3 (RISC-V) running ESPHome.
+ *   Handles Wi-Fi, mDNS, Home Assistant native API, SNTP RTC time synchronization,
+ *   audio playback over I2S to NS4168 amplifier, and NVS-backed schedule storage.
+ * - Coprocessor: Sinowealth SC95F8766P running factory firmware.
+ *   Directly controls the motor H-bridge, strain gauge load cell (bowl weight scale),
+ *   IR food hopper level sensors, battery management, and front physical buttons.
+ *
+ * Communication Protocol:
+ * - Physical link: UART 115200 baud, 8N1 (GPIO18 RX / GPIO19 TX).
+ * - Framing: Header byte 0xA5, frame type (0x21/0x22 request, 0x12 ACK), sequence ID,
+ *   payload length (uint16 LE), checksum (modulo 256 sum inversion = 0xFF).
+ * - Payload: Protocol Version 0x02, Opcode (uint16 LE), Status, followed by KLV items:
+ *   [Key ID (1 Byte)] [Length (1 Byte)] [Value (Length Bytes)].
+ *
+ * Verified Reverse-Engineered Functions (Stock app_active.elf & APK):
+ * - pet_feeder_uart_set_food_output (0x42009d76) -> Opcode 0x5590
+ * - pet_feeder_food_output_situation_handle_klv (0x4200a2c2) -> Opcode 0x5596
+ * - pet_feeder_report_zero_result_event (0x4200a5d0) -> Opcode 0x55A3
+ * - pet_feeder_measuring_feed_handle_klv (0x4200a6e0) -> Opcode 0x5599
+ * - savePetSingleMealMeasure (0x42009aca) -> Opcode 0x5599 (Key 1=0, Key 2=grams)
+ * ============================================================================
+ */
+
 #include "esphome/core/component.h"
 #include "esphome/core/automation.h"
 #include "esphome/core/helpers.h"
@@ -143,7 +172,8 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   void sync_clock(uint32_t epoch_sec = 0);
 
   // Automated Kibble Calibration Wizard
-  void start_portion_calibration(uint16_t portions = 3);
+  void start_portion_calibration(uint16_t portions = 2);
+  void start_stock_measuring();
 
   // Dual-Boot Wireless Rollback
   void rollback_to_stock_firmware();
@@ -297,7 +327,7 @@ class PPFR361SFeedButton : public button::Button, public Parented<PPFR361SCompon
 class PPFR361SCalibrateButton : public button::Button, public Parented<PPFR361SComponent> {
  protected:
   void press_action() override {
-    this->parent_->start_portion_calibration(3);
+    this->parent_->start_portion_calibration(2);
   }
 };
 
@@ -341,7 +371,7 @@ template<typename... Ts> class PPFR361SCalibratePortionAction : public Action<Ts
   TEMPLATABLE_VALUE(uint16_t, portions)
 
   void play(const Ts &...x) override {
-    uint16_t p = this->portions_.has_value() ? this->portions_.value(x...) : 3;
+    uint16_t p = this->portions_.has_value() ? this->portions_.value(x...) : 2;
     this->parent_->start_portion_calibration(p);
   }
 };
