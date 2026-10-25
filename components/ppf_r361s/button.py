@@ -9,12 +9,14 @@ DEPENDENCIES = ["ppf_r361s"]
 CONF_TARE = "tare"
 CONF_FEED = "feed"
 CONF_CALIBRATE_PORTION = "calibrate_portion"
+CONF_RESET_DESICCANT = "reset_desiccant"
 CONF_PORTIONS = "portions"
 CONF_SOUND = "sound"
 
 PPFR361STareButton = ppf_r361s_ns.class_("PPFR361STareButton", button.Button)
 PPFR361SFeedButton = ppf_r361s_ns.class_("PPFR361SFeedButton", button.Button)
 PPFR361SCalibrateButton = ppf_r361s_ns.class_("PPFR361SCalibrateButton", button.Button)
+PPFR361SResetDesiccantButton = ppf_r361s_ns.class_("PPFR361SResetDesiccantButton", button.Button)
 
 FEED_SCHEMA = button.button_schema(
     PPFR361SFeedButton,
@@ -38,6 +40,10 @@ CONFIG_SCHEMA = cv.Schema(
             PPFR361SCalibrateButton,
             icon="mdi:scale-unbalanced",
         ),
+        cv.Optional(CONF_RESET_DESICCANT): button.button_schema(
+            PPFR361SResetDesiccantButton,
+            icon="mdi:refresh",
+        ),
     }
 )
 
@@ -54,4 +60,7 @@ async def to_code(config):
         cg.add(btn.set_sound(feed_config[CONF_SOUND]))
     if calib_config := config.get(CONF_CALIBRATE_PORTION):
         btn = await button.new_button(calib_config)
+        await cg.register_parented(btn, hub)
+    if desiccant_config := config.get(CONF_RESET_DESICCANT):
+        btn = await button.new_button(desiccant_config)
         await cg.register_parented(btn, hub)

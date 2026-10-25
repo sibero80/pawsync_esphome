@@ -83,6 +83,7 @@ struct ScheduleStorage {
   uint8_t active_plan_idx{0};  // 0..6
   bool intelligent_feeding{false};
   float grams_per_portion{8.0f};
+  uint32_t last_desiccant_reset_epoch{0};
   FeedingPlan plans[MAX_PLANS];
 };
 
@@ -98,6 +99,7 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   void set_battery_level_sensor(sensor::Sensor *s) { this->battery_level_sensor_ = s; }
   void set_last_feed_weight_sensor(sensor::Sensor *s) { this->last_feed_weight_sensor_ = s; }
   void set_portions_today_sensor(sensor::Sensor *s) { this->portions_today_sensor_ = s; }
+  void set_desiccant_days_sensor(sensor::Sensor *s) { this->desiccant_days_sensor_ = s; }
 
   // Entity setters - Binary Sensors
   void set_power_adapter_sensor(binary_sensor::BinarySensor *s) { this->power_adapter_sensor_ = s; }
@@ -132,6 +134,7 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
     this->feed(static_cast<uint16_t>(this->get_manual_feed_portions()), true);
   }
   void tare_bowl();
+  void reset_desiccant();
   void set_child_lock(bool locked);
   void set_slow_feed(bool slow);
   void set_sleep_mode(bool sleep);
@@ -200,7 +203,6 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   bool dispense_stop_sent_{false};
   bool emergency_stop_triggered_{false};
   uint32_t emergency_stop_time_{0};
-  bool restore_child_lock_after_feed_{false};
   uint16_t last_mcu_total_portions_{0};
   bool mcu_total_initialized_{false};
   int last_day_of_year_{-1};
@@ -221,6 +223,7 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   sensor::Sensor *battery_level_sensor_{nullptr};
   sensor::Sensor *last_feed_weight_sensor_{nullptr};
   sensor::Sensor *portions_today_sensor_{nullptr};
+  sensor::Sensor *desiccant_days_sensor_{nullptr};
 
   binary_sensor::BinarySensor *power_adapter_sensor_{nullptr};
   binary_sensor::BinarySensor *food_low_sensor_{nullptr};
@@ -293,6 +296,13 @@ class PPFR361SCalibrateButton : public button::Button, public Parented<PPFR361SC
  protected:
   void press_action() override {
     this->parent_->start_portion_calibration(3);
+  }
+};
+
+class PPFR361SResetDesiccantButton : public button::Button, public Parented<PPFR361SComponent> {
+ protected:
+  void press_action() override {
+    this->parent_->reset_desiccant();
   }
 };
 

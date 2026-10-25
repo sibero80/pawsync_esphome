@@ -18,6 +18,7 @@ CONF_BOWL_WEIGHT = "bowl_weight"
 CONF_BATTERY_LEVEL = "battery_level"
 CONF_LAST_FEED_WEIGHT = "last_feed_weight"
 CONF_PORTIONS_TODAY = "portions_today"
+CONF_DESICCANT_DAYS = "desiccant_days"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -49,6 +50,13 @@ CONFIG_SCHEMA = cv.Schema(
             accuracy_decimals=0,
             state_class=STATE_CLASS_TOTAL_INCREASING,
         ),
+        cv.Optional(CONF_DESICCANT_DAYS): sensor.sensor_schema(
+            unit_of_measurement="d",
+            icon="mdi:calendar-clock",
+            accuracy_decimals=0,
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
     }
 )
 
@@ -67,3 +75,6 @@ async def to_code(config):
     if portions_today_config := config.get(CONF_PORTIONS_TODAY):
         sens = await sensor.new_sensor(portions_today_config)
         cg.add(hub.set_portions_today_sensor(sens))
+    if desiccant_days_config := config.get(CONF_DESICCANT_DAYS):
+        sens = await sensor.new_sensor(desiccant_days_config)
+        cg.add(hub.set_desiccant_days_sensor(sens))

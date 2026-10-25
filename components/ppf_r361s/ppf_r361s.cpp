@@ -26,6 +26,9 @@ void PPFR361SComponent::setup() {
   // Indicate solid connected Wi-Fi state to coprocessor front LED
   this->set_wifi_led(2);
 
+  // Ensure coprocessor is unlocked on startup so remote & manual feed work out-of-the-box
+  this->set_child_lock(false);
+
   // Push active schedule to coprocessor EEPROM for autonomous offline execution
   this->sync_schedules_to_coprocessor();
 
@@ -47,6 +50,8 @@ void PPFR361SComponent::setup() {
     this->bowl_connected_sensor_->publish_state(true);
   if (this->portions_today_sensor_ != nullptr)
     this->portions_today_sensor_->publish_state(this->portions_today_);
+  if (this->desiccant_days_sensor_ != nullptr)
+    this->desiccant_days_sensor_->publish_state(30.0f);
   if (this->last_feed_weight_sensor_ != nullptr)
     this->last_feed_weight_sensor_->publish_state(0.0f);
   if (this->manual_feed_portions_number_ != nullptr)
@@ -67,9 +72,9 @@ void PPFR361SComponent::loop() {
     this->parse_rx_buffer_();
   }
 
-  // Periodic heartbeat / telemetry poll
+  // Periodic heartbeat / telemetry poll (skip while dispensing to avoid interrupting motor cycle)
   uint32_t now_ms = millis();
-  if (now_ms - this->last_poll_time_ >= this->poll_interval_ms_) {
+  if (!this->is_dispensing_ && now_ms - this->last_poll_time_ >= this->poll_interval_ms_) {
     this->last_poll_time_ = now_ms;
     this->poll_status_();
   }
@@ -337,7 +342,7 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
       // Key 3: child_lock (0 = Unlocked, 1 = Locked)
       if (klv.count(3) && !klv.at(3).empty()) {
         bool locked = (klv.at(3)[0] != 0);
-        if (this->child_lock_switch_ != nullptr)
+        if (this->child_lock_switch_ != nullptr && !this->is_dispensing_)
           this->child_lock_switch_->publish_state(locked);
       }
 
@@ -348,11 +353,26 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
           this->food_low_sensor_->publish_state(food_low);
       }
 
-      // Key 5: battery_percent (0-100%)
-      if (klv.count(5) && !klv.at(5).empty()) {
-        uint8_t bat = klv.at(5)[0];
-        if (this->battery_level_sensor_ != nullptr)
+      // Key 14 (0x0E): battery_percent (0-100%, verified against stock ELF 0x4200ba76)
+      if (klv.count(14) && !klv.at(14).empty()) {
+        uint8_t bat = klv.at(14)[0];
+        if (bat <= 100 && this->battery_level_sensor_ != nullptr)
           this->battery_level_sensor_->publish_state(static_cast<float>(bat));
+      } else if (klv.count(5) && !klv.at(5).empty()) {
+        uint8_t bat = klv.at(5)[0];
+        if (bat > 0 && bat <= 100 && this->battery_level_sensor_ != nullptr)
+          this->battery_level_sensor_->publish_state(static_cast<float>(bat));
+      }
+
+      // Update desiccant days remaining (30-day countdown matching stock APK)
+      if (this->desiccant_days_sensor_ != nullptr) {
+        uint32_t now_epoch = this->time_ != nullptr ? this->time_->now().timestamp : 0;
+        uint8_t days_left = 30;
+        if (now_epoch > 1700000000 && this->storage_.last_desiccant_reset_epoch > 0) {
+          uint32_t elapsed_days = (now_epoch - this->storage_.last_desiccant_reset_epoch) / 86400;
+          days_left = elapsed_days >= 30 ? 0 : (30 - elapsed_days);
+        }
+        this->desiccant_days_sensor_->publish_state(days_left);
       }
 
       // Key 6: power_mode (0 = AC Adapter, 1 = Battery Backup)
@@ -420,13 +440,6 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
 
       if (klv.count(3) && !klv.at(3).empty())
         code = klv.at(3)[0];
-
-      // Re-engage child lock if it was temporarily bypassed for this dispense
-      if (this->restore_child_lock_after_feed_) {
-        this->restore_child_lock_after_feed_ = false;
-        ESP_LOGI(TAG, "Re-engaging child lock interlock after dispense");
-        this->set_child_lock(true);
-      }
 
       ESP_LOGI(TAG, "Feed result: weight=%dg, code=0x%02X", mcu_total, code);
 
@@ -575,21 +588,26 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
       break;
     }
 
-    case OPCODE_BUTTON_EVENT: { // 0x5597 - Hardware Button Event
-      uint8_t btn = 0;
-      if (klv.count(1) && !klv.at(1).empty()) {
-        btn = klv.at(1)[0];
+    case OPCODE_BUTTON_EVENT: { // 0x5597 - Hardware Reminder / Button Notification
+      uint8_t ev = 0;
+      if (klv.count(7) && !klv.at(7).empty()) {
+        ev = klv.at(7)[0];
+      } else if (klv.count(1) && !klv.at(1).empty()) {
+        ev = klv.at(1)[0];
       }
-      ESP_LOGI(TAG, "Hardware button event from MCU: 0x%02X", btn);
-      if (btn == 0x01 || btn == 0x02) {
-        ESP_LOGI(TAG, "Front manual feed button pressed! Dispensing 1 portion...");
-        this->feed(1, true);
-      }
+      ESP_LOGI(TAG, "Hardware event from coprocessor (0x5597): 0x%02X", ev);
+      // NOTE: Coprocessor MCU directly handles front button physical dispense internally;
+      // do not inject a software feed command here to avoid infinite feedback loops.
       break;
     }
 
     case OPCODE_PLAY_AUDIO: { // 0x5598 - Play Audio Chime Notification
-      ESP_LOGI(TAG, "Coprocessor requested audio chime prompt playback");
+      ESP_LOGI(TAG, "Coprocessor requested audio chime prompt playback (0x5598)");
+      if (this->sleep_mode_switch_ != nullptr && this->sleep_mode_switch_->state) {
+        ESP_LOGI(TAG, "Sleep mode active: silencing meal prompt");
+      } else {
+        this->schedule_trigger_callback_.call();
+      }
       break;
     }
 
@@ -620,20 +638,13 @@ void PPFR361SComponent::feed(uint16_t portions, bool sound) {
   if (this->status_text_sensor_ != nullptr && this->calib_state_ == CALIB_IDLE)
     this->status_text_sensor_->publish_state("Feeding...");
 
-  // If child lock is active, temporarily bypass it for this manual feed request
-  if (this->child_lock_switch_ != nullptr && this->child_lock_switch_->state) {
-    ESP_LOGI(TAG, "Child lock active: temporarily unlocking for remote feed...");
-    this->restore_child_lock_after_feed_ = true;
-    this->set_child_lock(false);
-  }
-
-  // Exact 3 keys matching stock protocol:
+  // Exact 3 keys matching stock protocol (pet_feeder_uart_set_food_output / executeGrain):
   // frame_type: 0x02 (SC95F protocol master request)
   // Key 1 (2B): Portions (uint16_t LE)
   // Key 2 (2B): Cutoff limit (0x0000)
-  // Key 3 (1B): Feed Type (1 = meal trigger with active motor PWM; 0 = manual/idle)
+  // Key 3 (1B): Feed Type (0 = remote meal command matching stock executeGrain)
   uint16_t target_weight = 0;
-  uint8_t feed_type = 1;
+  uint8_t feed_type = 0;
 
   ESP_LOGI(TAG, "Sending food output command (0x5590): portions=%d, target=%dg, type=%d (target_duration=%lu ms)...",
            portions, target_weight, feed_type, (unsigned long)this->dispense_target_duration_ms_);
@@ -648,6 +659,18 @@ void PPFR361SComponent::feed(uint16_t portions, bool sound) {
 void PPFR361SComponent::tare_bowl() {
   ESP_LOGI(TAG, "Zeroing bowl scale...");
   this->send_frame_(0x02, OPCODE_TARE_BOWL, 0x00, {});
+}
+
+void PPFR361SComponent::reset_desiccant() {
+  ESP_LOGI(TAG, "Resetting 30-day silica desiccant replacement timer...");
+  if (this->time_ != nullptr && this->time_->now().is_valid()) {
+    this->storage_.last_desiccant_reset_epoch = this->time_->now().timestamp;
+  } else {
+    this->storage_.last_desiccant_reset_epoch = static_cast<uint32_t>(::time(nullptr));
+  }
+  this->save_schedule_to_nvs_();
+  if (this->desiccant_days_sensor_ != nullptr)
+    this->desiccant_days_sensor_->publish_state(30.0f);
 }
 
 void PPFR361SComponent::start_portion_calibration(uint16_t portions) {

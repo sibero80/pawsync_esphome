@@ -108,6 +108,7 @@ switch:
   - platform: ppf_r361s
     child_lock:
       name: "Child Lock"
+      restore_mode: RESTORE_DEFAULT_OFF
     slow_feed:
       name: "Slow Feed Mode"
     sleep_mode:
@@ -140,6 +141,8 @@ sensor:
       name: "Last Feed Weight"
     portions_today:
       name: "Portions Today"
+    desiccant_days:
+      name: "Desiccant Days Remaining"
 
 binary_sensor:
   - platform: ppf_r361s
@@ -171,6 +174,8 @@ button:
       sound: true
     calibrate_portion:
       name: "Calibrate Kibble Density (Empty Bowl First)"
+    reset_desiccant:
+      name: "Reset Desiccant (30 Days)"
   - platform: template
     name: "Feed Selected Portions"
     id: btn_feed_manual_portions
