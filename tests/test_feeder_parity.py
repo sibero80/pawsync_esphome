@@ -142,9 +142,15 @@ def test_tare_bowl():
     
     print(f"[*] Pressing tare button: {button_eid}...")
     call_service("button", "press", {"entity_id": button_eid})
-    time.sleep(2.5)
     
-    new_weight = float(get_entity_state(sensor_eid).get("state", 999))
+    start = time.time()
+    new_weight = 999.0
+    while time.time() - start < 6.0:
+        time.sleep(0.5)
+        new_weight = float(get_entity_state(sensor_eid).get("state", 999))
+        if abs(new_weight) <= 1.0:
+            break
+            
     print(f"[*] Bowl weight post-tare: {new_weight}g")
     assert abs(new_weight) <= 1.0, f"Expected weight within [-1, 1]g, got {new_weight}g"
     print("[PASS] Tare command executed and scale zeroed")
@@ -236,6 +242,47 @@ def test_remote_feed_execution():
     print("[PASS] Remote feed executed seamlessly, motor physically actuated, and food scale recorded kibble increase!")
 
 
+def test_automated_kibble_calibration():
+    """Verify automated kibble calibration wizard: tare -> test dispense -> settle -> calibrate density."""
+    print("\n--- Test: Automated Kibble Portion Calibration Wizard ---")
+    btn_calib = "button.pawsync_ppf_r361s_feeder_calibrate_kibble_density_empty_bowl_first"
+    sensor_status = "sensor.pawsync_ppf_r361s_feeder_feeder_status"
+    sensor_weight = "sensor.pawsync_ppf_r361s_feeder_bowl_weight"
+    num_density = "number.pawsync_ppf_r361s_feeder_grams_per_portion_kibble_calibration"
+
+    init_weight = float(get_entity_state(sensor_weight).get("state", 0))
+    init_density = float(get_entity_state(num_density).get("state", 8.0))
+    print(f"[*] Initial bowl weight: {init_weight}g, density: {init_density}g/portion")
+
+    print(f"[*] Triggering calibration wizard: {btn_calib}...")
+    call_service("button", "press", {"entity_id": btn_calib})
+
+    start_time = time.time()
+    observed_states = []
+    terminal_status = ""
+
+    while time.time() - start_time < 35.0:
+        time.sleep(1.0)
+        st = get_entity_state(sensor_status).get("state", "")
+        if not observed_states or observed_states[-1] != st:
+            observed_states.append(st)
+            w = get_entity_state(sensor_weight).get("state", "")
+            d = get_entity_state(num_density).get("state", "")
+            print(f"    [{time.time()-start_time:.1f}s] Feeder status -> '{st}' (bowl={w}g, density={d}g/p)")
+
+        if "Calibrated:" in st:
+            terminal_status = st
+            break
+        if "Failed" in st or "Tare Failed" in st:
+            raise AssertionError(f"Calibration failed with state: '{st}'")
+
+    assert terminal_status != "", f"Calibration did not complete within 35s. States observed: {observed_states}"
+    final_density = float(get_entity_state(num_density).get("state", 0))
+    print(f"[*] Terminal status: '{terminal_status}', Final density entity: {final_density}g/portion")
+    assert 3.0 <= final_density <= 20.0, f"Calibrated density out of expected bounds: {final_density}g/portion"
+    print("[PASS] Automated kibble calibration wizard completed successfully with accurate density calculation!")
+
+
 def run_all_tests():
     print("=" * 65)
     print("PAWSYNC PPF-R361S FEEDER - STOCK PARITY VERIFICATION SUITE")
@@ -248,6 +295,7 @@ def run_all_tests():
     test_desiccant_tracker()
     test_tare_bowl()
     test_remote_feed_execution()
+    test_automated_kibble_calibration()
 
     print("\n" + "=" * 65)
     print("ALL STOCK PARITY TESTS COMPLETED SUCCESSFULLY!")

@@ -116,9 +116,9 @@ void PPFR361SComponent::loop() {
     this->send_frame_(0x22, OPCODE_REBOOT_MCU, 0x00, {});
   }
 
-  // Calibration Settling State Handler (measures settled kibble weight after 3s)
+  // Calibration Settling State Handler (measures settled kibble weight after 3.5s)
   if (this->calib_state_ == CALIB_SETTLING) {
-    if (now_ms - this->calib_timer_ >= 3000) {
+    if (now_ms - this->calib_timer_ >= 3500) {
       this->calib_state_ = CALIB_IDLE;
       float weight = (this->bowl_weight_sensor_ != nullptr) ? this->bowl_weight_sensor_->state : 0.0f;
       if (!std::isnan(weight) && weight > 2.0f && this->calib_portions_ > 0) {
@@ -471,11 +471,13 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
       // Handle Portion Calibration State Machine
       if (this->calib_state_ == CALIB_DISPENSING) {
         if (code == 0 || (code & 0x01)) {
-          ESP_LOGI(TAG, "Calibration test dispense finished (%d portions). Waiting 3s for load cell settling...", delta_portions);
+          ESP_LOGI(TAG, "Calibration test dispense finished (%d portions). Waiting 3.5s for load cell settling...", delta_portions);
           this->calib_state_ = CALIB_SETTLING;
           this->calib_timer_ = millis();
           if (this->status_text_sensor_ != nullptr)
             this->status_text_sensor_->publish_state("Calibrating: Settling & weighing...");
+          this->set_timeout("calib_poll_1", 1500, [this]() { this->poll_status_(); });
+          this->set_timeout("calib_poll_2", 2800, [this]() { this->poll_status_(); });
         } else {
           ESP_LOGE(TAG, "Calibration failed: Motor jam or chute error during test dispense!");
           this->calib_state_ = CALIB_IDLE;
@@ -546,12 +548,14 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
     }
 
     case OPCODE_TARE_BOWL: { // 0x55A3 - Tare Result
+      // In stock firmware (s_zero_result / pet_feeder_report_zero_result_event):
+      // Key 1: Status Code (0 = success, 1 = bowlConnAbnormal, 2 = weightFluctuation, 3 = bowlNotPlaced)
+      // Key 2: Source Flag (1 = remote app command, 0 = hardware button)
       uint8_t result = status;
-      if (klv.count(2) && !klv.at(2).empty()) {
-        result = klv.at(2)[0];
-      } else if (klv.count(1) && !klv.at(1).empty()) {
+      if (klv.count(1) && !klv.at(1).empty()) {
         result = klv.at(1)[0];
       }
+
       if (result == 0) {
         ESP_LOGI(TAG, "Bowl scale tare successful (0g confirmed)");
         if (this->bowl_weight_sensor_ != nullptr)
@@ -571,17 +575,24 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
             this->status_text_sensor_->publish_state("Scale Tared");
         }
       } else if (result == 1) {
-        ESP_LOGW(TAG, "Tare failed: Weight Fluctuating / Unstable");
-        if (this->calib_state_ == CALIB_TARING) this->calib_state_ = CALIB_IDLE;
-        if (this->status_text_sensor_ != nullptr)
-          this->status_text_sensor_->publish_state("Tare Failed: Unstable Weight");
-      } else if (result == 2) {
-        ESP_LOGW(TAG, "Tare failed: Bowl Disconnected / Off Scale");
+        ESP_LOGW(TAG, "Tare failed: Bowl connection abnormal (bowlConnAbnormal)");
         if (this->calib_state_ == CALIB_TARING) this->calib_state_ = CALIB_IDLE;
         if (this->bowl_connected_sensor_ != nullptr)
           this->bowl_connected_sensor_->publish_state(false);
         if (this->status_text_sensor_ != nullptr)
-          this->status_text_sensor_->publish_state("Bowl Disconnected");
+          this->status_text_sensor_->publish_state("Bowl Connection Error");
+      } else if (result == 2) {
+        ESP_LOGW(TAG, "Tare failed: Weight Fluctuating / Unstable (weightFluctuation)");
+        if (this->calib_state_ == CALIB_TARING) this->calib_state_ = CALIB_IDLE;
+        if (this->status_text_sensor_ != nullptr)
+          this->status_text_sensor_->publish_state("Tare Failed: Unstable Weight");
+      } else if (result == 3) {
+        ESP_LOGW(TAG, "Tare failed: Bowl Not Placed / Missing (bowlNotPlaced)");
+        if (this->calib_state_ == CALIB_TARING) this->calib_state_ = CALIB_IDLE;
+        if (this->bowl_connected_sensor_ != nullptr)
+          this->bowl_connected_sensor_->publish_state(false);
+        if (this->status_text_sensor_ != nullptr)
+          this->status_text_sensor_->publish_state("Bowl Not Placed");
       } else {
         ESP_LOGW(TAG, "Bowl scale tare failed (result code %d)", result);
         if (this->calib_state_ == CALIB_TARING) this->calib_state_ = CALIB_IDLE;

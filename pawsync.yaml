@@ -8,12 +8,17 @@ esphome:
   comment: "Local ESPHome firmware for Pawsync PPF-R361S Pet Feeder with On-Device 7-Plan Scheduler"
   min_version: 2024.6.0
   on_boot:
-    priority: 2000.0
-    then:
-      - lambda: |-
-          #if defined(USE_ESP_IDF)
-          esp_ota_mark_app_valid_cancel_rollback();
-          #endif
+    - priority: 2000.0
+      then:
+        - lambda: |-
+            #if defined(USE_ESP_IDF)
+            esp_ota_mark_app_valid_cancel_rollback();
+            #endif
+    - priority: -100.0
+      then:
+        - lambda: |-
+            id(feeder_bridge).set_grams_per_portion_number(id(kibble_grams_per_portion));
+            id(kibble_grams_per_portion).publish_state(id(feeder_bridge).get_grams_per_portion());
 
 esp32:
   board: esp32-c3-devkitm-1
