@@ -25,26 +25,31 @@ namespace ppf_r361s {
 
 static const uint8_t FRAME_HEADER = 0xA5;
 
-// Protocol Opcodes
-static const uint16_t OPCODE_FEED_CMD           = 0x5018;
-static const uint16_t OPCODE_CHILD_LOCK         = 0x5104;
-static const uint16_t OPCODE_SLEEP_MODE         = 0x5105;
-static const uint16_t OPCODE_SLOW_FEED          = 0x5107;
-static const uint16_t OPCODE_WIFI_LED           = 0x5140;
-static const uint16_t OPCODE_BUZZER_SWITCH      = 0x5141;
-static const uint16_t OPCODE_STATUS_POLL        = 0x5590;
-static const uint16_t OPCODE_INTELLIGENT_FEED   = 0x5592;
-static const uint16_t OPCODE_STATUS_REPORT      = 0x5593;
-static const uint16_t OPCODE_DISPENSE_PROGRESS  = 0x5594;
-static const uint16_t OPCODE_SLEEP_CLOCK_SYNC   = 0x5595;
-static const uint16_t OPCODE_DISPENSE_RESULT    = 0x5596;
-static const uint16_t OPCODE_BUTTON_EVENT       = 0x5597;
-static const uint16_t OPCODE_SCHEDULE_TRIGGER   = 0x5598;
-static const uint16_t OPCODE_CLOCK_SYNC         = 0x55A1;
-static const uint16_t OPCODE_TARE_BOWL          = 0x55A3;
-static const uint16_t OPCODE_MOTOR_DIAGNOSTICS  = 0x55A4;
-static const uint16_t OPCODE_SCALE_RAW_ADC      = 0x55A5;
-static const uint16_t OPCODE_PLAN_SYNC          = 0x55A6;
+// Protocol Opcodes (verified against stock RISC-V ELF disassembly)
+static const uint16_t OPCODE_WIFI_LED           = 0x5018; // pet_feeder_uart_set_wifi_led
+static const uint16_t OPCODE_PRODUCTION_STATUS  = 0x5104; // pet_feeder_uart_set_production_status
+static const uint16_t OPCODE_PRODUCTION_RESULT  = 0x5105; // pet_feeder_uart_set_production_result
+static const uint16_t OPCODE_TEST_CMD           = 0x5107; // pet_feeder_uart_test_cmd
+static const uint16_t OPCODE_CHILD_LOCK         = 0x5140; // pet_feeder_uart_set_childlock
+static const uint16_t OPCODE_REBOOT_MCU         = 0x5141; // pet_feeder_uart_reboot_mcu
+static const uint16_t OPCODE_SET_DISPLAY        = 0x5504; // pet_feeder_uart_set_display
+static const uint16_t OPCODE_FEED_CMD           = 0x5590; // pet_feeder_uart_set_food_output
+static const uint16_t OPCODE_STATUS_POLL        = 0x5592; // pet_feeder_uart_query_device_status
+static const uint16_t OPCODE_STATUS_REPORT      = 0x5593; // pet_feeder_uart_report_status
+static const uint16_t OPCODE_DISPENSE_PROGRESS  = 0x5594; // pet_feeder_eating_situation_klv
+static const uint16_t OPCODE_CLOCK_REQ          = 0x5595; // Coprocessor requests system timestamp
+static const uint16_t OPCODE_DISPENSE_RESULT    = 0x5596; // pet_feeder_food_output_situation_handle_klv
+static const uint16_t OPCODE_BUTTON_EVENT       = 0x5597; // Hardware button event
+static const uint16_t OPCODE_PLAY_AUDIO         = 0x5598; // pet_feeder_play_audio_handle_klv
+static const uint16_t OPCODE_MEASURING          = 0x5599; // pet_feeder_uart_set_measuring
+static const uint16_t OPCODE_SLOW_FEED          = 0x55A0; // pet_feeder_uart_set_slow_mode
+static const uint16_t OPCODE_SLEEP_MODE         = 0x55A0; // pet_feeder_uart_set_sleep_mode
+static const uint16_t OPCODE_CLOCK_SYNC         = 0x55A1; // pet_feeder_uart_set_timestamp
+static const uint16_t OPCODE_FAC_RESULT         = 0x55A2; // pet_feeder_uart_set_fac_result
+static const uint16_t OPCODE_TARE_BOWL          = 0x55A3; // pet_feeder_uart_set_bowl_to_zero
+static const uint16_t OPCODE_MOTOR_DIAGNOSTICS  = 0x55A4; // Coprocessor motor diagnostics
+static const uint16_t OPCODE_SCALE_RAW_ADC      = 0x55A5; // Coprocessor raw ADC tracking
+static const uint16_t OPCODE_PLAN_SYNC          = 0x55A6; // pet_feeder_uart_set_temperature_correct
 
 // Schedule Storage Specifications (Matching Stock Capabilities)
 static const size_t MAX_PLANS = 7;
@@ -120,6 +125,12 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
 
   // Public control APIs
   void feed(uint16_t portions, bool sound = true);
+  float get_manual_feed_portions() const {
+    return this->manual_feed_portions_number_ != nullptr ? this->manual_feed_portions_number_->state : 1.0f;
+  }
+  void feed_manual_portions() {
+    this->feed(static_cast<uint16_t>(this->get_manual_feed_portions()), true);
+  }
   void tare_bowl();
   void set_child_lock(bool locked);
   void set_slow_feed(bool slow);
@@ -158,8 +169,9 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   void handle_opcode_(uint16_t opcode, uint8_t status, const std::map<uint8_t, std::vector<uint8_t>> &klv);
 
   // Serial transmission
-  void send_frame_(uint8_t frame_type, uint8_t sub_cmd, uint16_t opcode,
+  void send_frame_(uint8_t frame_type, uint16_t opcode,
                    uint8_t status, const std::vector<std::pair<uint8_t, std::vector<uint8_t>>> &klv_items);
+  void send_ack_(uint8_t rx_seq, uint16_t opcode, uint8_t status = 0);
 
   uint8_t calculate_checksum_(const uint8_t *buf, size_t len);
 
@@ -180,6 +192,16 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   bool ac_power_{true};
   uint32_t portions_today_{0};
   int last_scheduled_minute_{-1};
+  bool is_dispensing_{false};
+  uint32_t dispense_start_time_{0};
+  uint16_t dispense_requested_portions_{1};
+  uint32_t dispense_timeout_ms_{10000};
+  bool emergency_stop_triggered_{false};
+  uint32_t emergency_stop_time_{0};
+  bool restore_child_lock_after_feed_{false};
+  uint16_t last_mcu_total_portions_{0};
+  bool mcu_total_initialized_{false};
+  int last_day_of_year_{-1};
 
   // Calibration State Machine
   PortionCalibrationState calib_state_{CALIB_IDLE};

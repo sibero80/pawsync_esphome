@@ -34,6 +34,13 @@ logger:
 api:
   encryption:
     key: !secret api_encryption_key
+  services:
+    - service: feed
+      variables:
+        portions: int
+      then:
+        - lambda: |-
+            id(feeder_bridge).feed(portions, true);
 
 ota:
   - platform: esphome
@@ -164,6 +171,13 @@ button:
       sound: true
     calibrate_portion:
       name: "Calibrate Kibble Density (Empty Bowl First)"
+  - platform: template
+    name: "Feed Selected Portions"
+    id: btn_feed_manual_portions
+    icon: mdi:food-drumstick-outline
+    on_press:
+      - lambda: |-
+          id(feeder_bridge).feed_manual_portions();
   - platform: template
     name: "Rollback to Factory Firmware (Slot ota_1)"
     id: btn_rollback_stock

@@ -74,6 +74,37 @@ void PPFR361SComponent::loop() {
     this->poll_status_();
   }
 
+  // Hardware Watchdog / Safety Cutoff: prevents runaway dispensing loop
+  if (this->is_dispensing_) {
+    uint32_t elapsed = now_ms - this->dispense_start_time_;
+    if (elapsed > this->dispense_timeout_ms_) {
+      ESP_LOGE(TAG, "EMERGENCY SAFETY CUTOFF: Dispense duration (%lu ms) exceeded timeout (%lu ms)! Stopping motor...",
+               (unsigned long)elapsed, (unsigned long)this->dispense_timeout_ms_);
+      this->is_dispensing_ = false;
+
+      // 1. Send 0x5590 with 0 portions to command motor halt
+      std::vector<std::pair<uint8_t, std::vector<uint8_t>>> stop_items;
+      stop_items.push_back({1, {0x00, 0x00}});
+      stop_items.push_back({2, {0x00, 0x00}});
+      stop_items.push_back({3, {0x00}});
+      this->send_frame_(0x02, OPCODE_FEED_CMD, 0x00, stop_items);
+
+      // 2. Set emergency interlock to reboot coprocessor MCU (0x5141) if motor continues
+      this->emergency_stop_triggered_ = true;
+      this->emergency_stop_time_ = now_ms;
+
+      if (this->status_text_sensor_ != nullptr && this->calib_state_ == CALIB_IDLE)
+        this->status_text_sensor_->publish_state("Safety Cutoff Triggered");
+    }
+  }
+
+  // If emergency stop was triggered and motor didn't report complete within 1.5s, hard reboot coprocessor MCU
+  if (this->emergency_stop_triggered_ && (now_ms - this->emergency_stop_time_ > 1500)) {
+    this->emergency_stop_triggered_ = false;
+    ESP_LOGW(TAG, "Dispense failsafe: rebooting coprocessor MCU via 0x5141 to cut motor PWM");
+    this->send_frame_(0x02, OPCODE_REBOOT_MCU, 0x00, {});
+  }
+
   // Calibration Settling State Handler (measures settled kibble weight after 3s)
   if (this->calib_state_ == CALIB_SETTLING) {
     if (now_ms - this->calib_timer_ >= 3000) {
@@ -99,10 +130,16 @@ void PPFR361SComponent::loop() {
     }
   }
 
-  // Minute schedule tick
+  // Minute schedule tick and daily midnight portions reset
   if (this->time_ != nullptr) {
     ESPTime now = this->time_->now();
     if (now.is_valid()) {
+      if (now.day_of_year != this->last_day_of_year_) {
+        this->last_day_of_year_ = now.day_of_year;
+        this->portions_today_ = 0;
+        if (this->portions_today_sensor_ != nullptr)
+          this->portions_today_sensor_->publish_state(0);
+      }
       if (now.minute != this->last_scheduled_minute_) {
         this->last_scheduled_minute_ = now.minute;
         this->evaluate_schedules_(now);
@@ -145,20 +182,22 @@ uint8_t PPFR361SComponent::calculate_checksum_(const uint8_t *buf, size_t len) {
   return static_cast<uint8_t>((~sum) & 0xFF);
 }
 
-void PPFR361SComponent::send_frame_(uint8_t frame_type, uint8_t sub_cmd, uint16_t opcode,
+void PPFR361SComponent::send_frame_(uint8_t frame_type, uint16_t opcode,
                                    uint8_t status, const std::vector<std::pair<uint8_t, std::vector<uint8_t>>> &klv_items) {
-  // Encode inner KLV payload
+  // Encode inner KLV payload:
+  // Byte 0: Protocol Version (Fixed 0x02)
+  // Bytes 1-2: Opcode (Little-endian uint16_t)
+  // Byte 3: Status code (0x00 for TX command)
+  // Bytes 4+: KLV items [Key (1B)][Len (1B)][Value (Len B)]
   std::vector<uint8_t> inner;
-  inner.push_back(sub_cmd);
+  inner.push_back(0x02); // Fixed Protocol Version 0x02 for SC95F8766P coprocessor
   inner.push_back(static_cast<uint8_t>(opcode & 0xFF));
   inner.push_back(static_cast<uint8_t>((opcode >> 8) & 0xFF));
   inner.push_back(status);
 
   for (const auto &item : klv_items) {
     inner.push_back(item.first); // Key ID
-    uint16_t val_len = static_cast<uint16_t>(item.second.size());
-    inner.push_back(static_cast<uint8_t>(val_len & 0xFF));
-    inner.push_back(static_cast<uint8_t>((val_len >> 8) & 0xFF));
+    inner.push_back(static_cast<uint8_t>(item.second.size() & 0xFF)); // 1-byte length in SC95F protocol
     inner.insert(inner.end(), item.second.begin(), item.second.end());
   }
 
@@ -175,7 +214,30 @@ void PPFR361SComponent::send_frame_(uint8_t frame_type, uint8_t sub_cmd, uint16_
 
   frame[5] = this->calculate_checksum_(frame.data(), frame.size());
 
-  ESP_LOGV(TAG, "UART TX: Opcode 0x%04X, Seq %d, Len %d", opcode, frame[2], (int)frame.size());
+  ESP_LOGI(TAG, "RAW TX FRAME (%d bytes, Opcode 0x%04X): %s", (int)frame.size(), opcode, format_hex_pretty(frame.data(), frame.size()).c_str());
+  this->write_array(frame.data(), frame.size());
+}
+
+void PPFR361SComponent::send_ack_(uint8_t rx_seq, uint16_t opcode, uint8_t status) {
+  std::vector<uint8_t> inner;
+  inner.push_back(0x02); // Fixed Protocol Version 0x02
+  inner.push_back(static_cast<uint8_t>(opcode & 0xFF));
+  inner.push_back(static_cast<uint8_t>((opcode >> 8) & 0xFF));
+  inner.push_back(status);
+
+  uint16_t payload_len = static_cast<uint16_t>(inner.size());
+  std::vector<uint8_t> frame;
+  frame.reserve(payload_len + 6);
+  frame.push_back(FRAME_HEADER);
+  frame.push_back(0x12); // ACK frame type
+  frame.push_back(rx_seq);
+  frame.push_back(static_cast<uint8_t>(payload_len & 0xFF));
+  frame.push_back(static_cast<uint8_t>((payload_len >> 8) & 0xFF));
+  frame.push_back(0x00);
+  frame.insert(frame.end(), inner.begin(), inner.end());
+  frame[5] = this->calculate_checksum_(frame.data(), frame.size());
+
+  ESP_LOGI(TAG, "RAW TX ACK (Seq 0x%02X, Opcode 0x%04X): %s", rx_seq, opcode, format_hex_pretty(frame.data(), frame.size()).c_str());
   this->write_array(frame.data(), frame.size());
 }
 
@@ -220,9 +282,16 @@ bool PPFR361SComponent::process_frame_(const uint8_t *frame, size_t len) {
   if (len < 10) return false;
 
   ESP_LOGI(TAG, "RAW FRAME (%d bytes): %s", (int)len, format_hex_pretty(frame, len).c_str());
-  uint8_t sub_cmd = frame[6];
+  uint8_t frame_type = frame[1];
+  uint8_t rx_seq = frame[2];
+  uint8_t proto_ver = frame[6];
   uint16_t opcode = frame[7] | (static_cast<uint16_t>(frame[8]) << 8);
   uint8_t status = frame[9];
+
+  // Auto-ACK incoming request frames from coprocessor (frame_type 0x22)
+  if (frame_type == 0x22) {
+    this->send_ack_(rx_seq, opcode, 0x00);
+  }
 
   // Parse KLV elements from frame[10] to frame[len-1]
   // In SC95F8766P hardware protocol, key length is 1 byte: [KeyID (1B)][Length (1B)][Value (Len B)]
@@ -238,7 +307,7 @@ bool PPFR361SComponent::process_frame_(const uint8_t *frame, size_t len) {
     idx += item_len;
   }
 
-  ESP_LOGI(TAG, "UART RX: Opcode 0x%04X, SubCmd 0x%02X, Status %d, KLV count %d", opcode, sub_cmd, status, (int)klv_map.size());
+  ESP_LOGI(TAG, "UART RX: Opcode 0x%04X, ProtoVer 0x%02X, Status %d, KLV count %d", opcode, proto_ver, status, (int)klv_map.size());
   for (const auto &kv : klv_map) {
     ESP_LOGI(TAG, "  -> KLV Key %d (len %d): %s", kv.first, (int)kv.second.size(), format_hex_pretty(kv.second).c_str());
   }
@@ -249,6 +318,7 @@ bool PPFR361SComponent::process_frame_(const uint8_t *frame, size_t len) {
 void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
                                       const std::map<uint8_t, std::vector<uint8_t>> &klv) {
   switch (opcode) {
+    case OPCODE_STATUS_POLL:   // 0x5592 - Device Status Query Response
     case OPCODE_STATUS_REPORT: { // 0x5593 - Full Telemetry Status Report
       // Key 3: child_lock (0 = Unlocked, 1 = Locked)
       if (klv.count(3) && !klv.at(3).empty()) {
@@ -264,17 +334,16 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
           this->food_low_sensor_->publish_state(food_low);
       }
 
-      // Key 5: motor error / jammed (0 = OK, 1 = Jammed)
+      // Key 5: battery_percent (0-100%)
       if (klv.count(5) && !klv.at(5).empty()) {
-        bool jammed = (klv.at(5)[0] != 0);
-        if (this->motor_jammed_sensor_ != nullptr)
-          this->motor_jammed_sensor_->publish_state(jammed);
+        uint8_t bat = klv.at(5)[0];
+        if (this->battery_level_sensor_ != nullptr)
+          this->battery_level_sensor_->publish_state(static_cast<float>(bat));
       }
 
-      // Key 8: powerAdapter (0 = Battery, 1 = AC Adapter) - fallback to Key 7 if present
-      bool has_ac_key = klv.count(8) || klv.count(7);
-      if (has_ac_key) {
-        bool ac_power = klv.count(8) ? (klv.at(8)[0] != 0) : (klv.at(7)[0] != 0);
+      // Key 6: power_mode (0 = AC Adapter, 1 = Battery Backup)
+      if (klv.count(6) && !klv.at(6).empty()) {
+        bool ac_power = (klv.at(6)[0] == 0);
         if (this->power_adapter_sensor_ != nullptr)
           this->power_adapter_sensor_->publish_state(ac_power);
 
@@ -294,44 +363,86 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
         }
       }
 
-      // Key 11 (0x0B): bowlWeight (grams, int16 LE) - fallback to Key 8 if 2+ bytes
+      // Key 7: error_code (0 = OK, 1 = Jammed, 2 = Chute Blocked)
+      if (klv.count(7) && !klv.at(7).empty()) {
+        uint8_t err = klv.at(7)[0];
+        bool jammed = (err == 1);
+        if (this->motor_jammed_sensor_ != nullptr)
+          this->motor_jammed_sensor_->publish_state(jammed);
+        if (err == 1 && this->status_text_sensor_ != nullptr)
+          this->status_text_sensor_->publish_state("Motor Jammed");
+        else if (err == 2 && this->status_text_sensor_ != nullptr)
+          this->status_text_sensor_->publish_state("Outlet Blocked");
+      }
+
+      // Key 11 (0x0B): remaining_weight (grams, int16 LE)
       if (klv.count(11) && klv.at(11).size() >= 2) {
         int16_t weight = static_cast<int16_t>(klv.at(11)[0] | (klv.at(11)[1] << 8));
         if (this->bowl_weight_sensor_ != nullptr)
           this->bowl_weight_sensor_->publish_state(static_cast<float>(weight));
-      } else if (klv.count(8) && klv.at(8).size() >= 2) {
-        int16_t weight = static_cast<int16_t>(klv.at(8)[0] | (klv.at(8)[1] << 8));
-        if (this->bowl_weight_sensor_ != nullptr)
-          this->bowl_weight_sensor_->publish_state(static_cast<float>(weight));
-      }
-
-      // Key 21 (0x15): bowlConnected (0 = Disconnected, 1 = Connected)
-      if (klv.count(21) && !klv.at(21).empty()) {
-        bool connected = (klv.at(21)[0] != 0);
         if (this->bowl_connected_sensor_ != nullptr)
-          this->bowl_connected_sensor_->publish_state(connected);
+          this->bowl_connected_sensor_->publish_state(true);
       }
 
-      if (this->status_text_sensor_ != nullptr && this->calib_state_ == CALIB_IDLE)
-        this->status_text_sensor_->publish_state("Online / Standby");
+      // Only publish Online / Standby if not currently dispensing or calibrating
+      if (!this->is_dispensing_ && this->calib_state_ == CALIB_IDLE) {
+        if (this->status_text_sensor_ != nullptr)
+          this->status_text_sensor_->publish_state("Online / Standby");
+      }
       break;
     }
 
     case OPCODE_DISPENSE_RESULT: { // 0x5596 - Dispense Complete Telemetry
-      uint8_t portions = 0;
+      this->is_dispensing_ = false;
+      this->emergency_stop_triggered_ = false;
+      uint16_t mcu_total = 0;
       uint8_t code = 0;
 
-      if (klv.count(2) && !klv.at(2).empty())
-        portions = klv.at(2)[0];
+      if (klv.count(2) && klv.at(2).size() >= 2)
+        mcu_total = klv.at(2)[0] | (static_cast<uint16_t>(klv.at(2)[1]) << 8);
+      else if (klv.count(2) && !klv.at(2).empty())
+        mcu_total = klv.at(2)[0];
+
       if (klv.count(3) && !klv.at(3).empty())
         code = klv.at(3)[0];
 
-      ESP_LOGI(TAG, "Feed result: portions=%d, code=%d", portions, code);
+      // Re-engage child lock if it was temporarily bypassed for this dispense
+      if (this->restore_child_lock_after_feed_) {
+        this->restore_child_lock_after_feed_ = false;
+        ESP_LOGI(TAG, "Re-engaging child lock interlock after dispense");
+        this->set_child_lock(true);
+      }
+
+      // Calculate portion delta from coprocessor cumulative counter
+      uint16_t delta_portions = 0;
+      if (mcu_total > 0) {
+        if (!this->mcu_total_initialized_) {
+          this->mcu_total_initialized_ = true;
+          this->last_mcu_total_portions_ = mcu_total;
+          delta_portions = this->dispense_requested_portions_ > 0 ? this->dispense_requested_portions_ : 1;
+        } else {
+          if (mcu_total >= this->last_mcu_total_portions_) {
+            delta_portions = mcu_total - this->last_mcu_total_portions_;
+          } else {
+            delta_portions = mcu_total; // Rollover
+          }
+          this->last_mcu_total_portions_ = mcu_total;
+        }
+      }
+
+      // If delta_portions is still 0 on successful dispense (e.g. mcu_total was 0 on pulse mode),
+      // attribute the requested portions (or 1 for physical button press)
+      if (delta_portions == 0 && code == 0) {
+        delta_portions = this->dispense_requested_portions_ > 0 ? this->dispense_requested_portions_ : 1;
+      }
+      this->dispense_requested_portions_ = 0;
+
+      ESP_LOGI(TAG, "Feed result: delta_portions=%d (mcu_total=%d), code=%d", delta_portions, mcu_total, code);
 
       // Handle Portion Calibration State Machine
       if (this->calib_state_ == CALIB_DISPENSING) {
         if (code == 0) {
-          ESP_LOGI(TAG, "Calibration test dispense finished (%d portions). Waiting 3s for load cell settling...", portions);
+          ESP_LOGI(TAG, "Calibration test dispense finished (%d portions). Waiting 3s for load cell settling...", delta_portions);
           this->calib_state_ = CALIB_SETTLING;
           this->calib_timer_ = millis();
           if (this->status_text_sensor_ != nullptr)
@@ -345,13 +456,24 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
       }
 
       if (code == 0) {
-        this->portions_today_ += portions;
-        if (this->portions_today_sensor_ != nullptr)
-          this->portions_today_sensor_->publish_state(this->portions_today_);
+        if (delta_portions > 0) {
+          this->portions_today_ += delta_portions;
+          if (this->portions_today_sensor_ != nullptr)
+            this->portions_today_sensor_->publish_state(this->portions_today_);
+
+          float grams = static_cast<float>(delta_portions) * this->storage_.grams_per_portion;
+          if (this->last_feed_weight_sensor_ != nullptr)
+            this->last_feed_weight_sensor_->publish_state(grams);
+
+          if (this->status_text_sensor_ != nullptr && this->calib_state_ == CALIB_IDLE)
+            this->status_text_sensor_->publish_state("Feeding Complete");
+        } else {
+          ESP_LOGW(TAG, "Feed reported 0 portions dispensed (coprocessor aborted or child locked)");
+          if (this->status_text_sensor_ != nullptr && this->calib_state_ == CALIB_IDLE)
+            this->status_text_sensor_->publish_state("Feed Aborted (0p)");
+        }
         if (this->motor_jammed_sensor_ != nullptr)
           this->motor_jammed_sensor_->publish_state(false);
-        if (this->status_text_sensor_ != nullptr && this->calib_state_ == CALIB_IDLE)
-          this->status_text_sensor_->publish_state("Feeding Complete");
       } else if (code == 1) {
         ESP_LOGE(TAG, "FEED ERROR: Motor Jammed!");
         if (this->motor_jammed_sensor_ != nullptr)
@@ -366,62 +488,104 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
       break;
     }
 
-    case OPCODE_TARE_BOWL: { // 0x55A3 - Tare ACK
-      if (klv.count(1) && !klv.at(1).empty()) {
-        uint8_t result = klv.at(1)[0];
-        if (result == 0) {
-          ESP_LOGI(TAG, "Bowl scale tare successful (0g confirmed)");
-          if (this->bowl_weight_sensor_ != nullptr)
-            this->bowl_weight_sensor_->publish_state(0.0f);
-          if (this->bowl_connected_sensor_ != nullptr)
-            this->bowl_connected_sensor_->publish_state(true);
-
-          if (this->calib_state_ == CALIB_TARING) {
-            ESP_LOGI(TAG, "Calibration tare confirmed 0g. Dispensing %d test portions...", this->calib_portions_);
-            if (this->status_text_sensor_ != nullptr)
-              this->status_text_sensor_->publish_state("Calibrating: Dispensing test portions...");
-            this->calib_state_ = CALIB_DISPENSING;
-            this->calib_timer_ = millis();
-            this->feed(this->calib_portions_, false); // Dispense silently
-          } else {
-            if (this->status_text_sensor_ != nullptr)
-              this->status_text_sensor_->publish_state("Scale Tared");
-          }
-        } else if (result == 1) {
-          ESP_LOGW(TAG, "Tare failed: Weight Fluctuating / Unstable");
-          if (this->calib_state_ == CALIB_TARING) this->calib_state_ = CALIB_IDLE;
-          if (this->status_text_sensor_ != nullptr)
-            this->status_text_sensor_->publish_state("Tare Failed: Unstable Weight");
-        } else if (result == 2) {
-          ESP_LOGW(TAG, "Tare failed: Bowl Disconnected / Off Scale");
-          if (this->calib_state_ == CALIB_TARING) this->calib_state_ = CALIB_IDLE;
-          if (this->bowl_connected_sensor_ != nullptr)
-            this->bowl_connected_sensor_->publish_state(false);
-          if (this->status_text_sensor_ != nullptr)
-            this->status_text_sensor_->publish_state("Bowl Disconnected");
-        } else {
-          ESP_LOGW(TAG, "Bowl scale tare failed (result code %d)", result);
-          if (this->calib_state_ == CALIB_TARING) this->calib_state_ = CALIB_IDLE;
-          if (this->status_text_sensor_ != nullptr)
-            this->status_text_sensor_->publish_state("Tare Failed");
-        }
+    case OPCODE_FEED_CMD: { // Feed Command Response (0x5590)
+      if (status == 0) {
+        ESP_LOGI(TAG, "Feed request accepted by coprocessor (Status 0). Motor running...");
+        this->is_dispensing_ = true;
+        this->dispense_start_time_ = millis();
+        if (this->status_text_sensor_ != nullptr && this->calib_state_ == CALIB_IDLE)
+          this->status_text_sensor_->publish_state("Dispensing...");
+      } else {
+        ESP_LOGE(TAG, "Feed request rejected by coprocessor with status %d (0x%02X)", status, status);
+        this->is_dispensing_ = false;
+        if (this->status_text_sensor_ != nullptr)
+          this->status_text_sensor_->publish_state("Feed Rejected");
       }
       break;
     }
 
-    case OPCODE_SCHEDULE_TRIGGER: { // 0x5598 - Offline Scheduled Meal Fired
-      ESP_LOGI(TAG, "Autonomous scheduled meal fired by coprocessor!");
-      if (this->status_text_sensor_ != nullptr)
-        this->status_text_sensor_->publish_state("Scheduled Feed Running");
-      this->schedule_trigger_callback_.call();
+    case OPCODE_CHILD_LOCK: { // 0x5104 - Child Lock ACK
+      ESP_LOGI(TAG, "Child lock ACK from coprocessor: status %d", status);
+      break;
+    }
+
+    case OPCODE_TARE_BOWL: { // 0x55A3 - Tare ACK
+      uint8_t result = status;
+      if (klv.count(1) && !klv.at(1).empty()) {
+        result = klv.at(1)[0];
+      }
+      if (result == 0) {
+        ESP_LOGI(TAG, "Bowl scale tare successful (0g confirmed)");
+        if (this->bowl_weight_sensor_ != nullptr)
+          this->bowl_weight_sensor_->publish_state(0.0f);
+        if (this->bowl_connected_sensor_ != nullptr)
+          this->bowl_connected_sensor_->publish_state(true);
+
+        if (this->calib_state_ == CALIB_TARING) {
+          ESP_LOGI(TAG, "Calibration tare confirmed 0g. Dispensing %d test portions...", this->calib_portions_);
+          if (this->status_text_sensor_ != nullptr)
+            this->status_text_sensor_->publish_state("Calibrating: Dispensing test portions...");
+          this->calib_state_ = CALIB_DISPENSING;
+          this->calib_timer_ = millis();
+          this->feed(this->calib_portions_, false); // Dispense silently
+        } else {
+          if (this->status_text_sensor_ != nullptr)
+            this->status_text_sensor_->publish_state("Scale Tared");
+        }
+      } else if (result == 1) {
+        ESP_LOGW(TAG, "Tare failed: Weight Fluctuating / Unstable");
+        if (this->calib_state_ == CALIB_TARING) this->calib_state_ = CALIB_IDLE;
+        if (this->status_text_sensor_ != nullptr)
+          this->status_text_sensor_->publish_state("Tare Failed: Unstable Weight");
+      } else if (result == 2) {
+        ESP_LOGW(TAG, "Tare failed: Bowl Disconnected / Off Scale");
+        if (this->calib_state_ == CALIB_TARING) this->calib_state_ = CALIB_IDLE;
+        if (this->bowl_connected_sensor_ != nullptr)
+          this->bowl_connected_sensor_->publish_state(false);
+        if (this->status_text_sensor_ != nullptr)
+          this->status_text_sensor_->publish_state("Bowl Disconnected");
+      } else {
+        ESP_LOGW(TAG, "Bowl scale tare failed (result code %d)", result);
+        if (this->calib_state_ == CALIB_TARING) this->calib_state_ = CALIB_IDLE;
+        if (this->status_text_sensor_ != nullptr)
+          this->status_text_sensor_->publish_state("Tare Failed");
+      }
+      break;
+    }
+
+    case OPCODE_CLOCK_REQ: { // 0x5595 - Coprocessor requests timestamp sync
+      uint32_t epoch_sec = 0;
+      if (this->time_ != nullptr) {
+        ESPTime now = this->time_->now();
+        if (now.is_valid()) epoch_sec = now.timestamp;
+      }
+      ESP_LOGI(TAG, "Coprocessor requested timestamp via 0x5595: syncing epoch %lu", (unsigned long)epoch_sec);
+      std::vector<std::pair<uint8_t, std::vector<uint8_t>>> items;
+      items.push_back({1, {
+        static_cast<uint8_t>(epoch_sec & 0xFF),
+        static_cast<uint8_t>((epoch_sec >> 8) & 0xFF),
+        static_cast<uint8_t>((epoch_sec >> 16) & 0xFF),
+        static_cast<uint8_t>((epoch_sec >> 24) & 0xFF)
+      }});
+      this->send_frame_(0x02, OPCODE_CLOCK_REQ, 0x00, items);
       break;
     }
 
     case OPCODE_BUTTON_EVENT: { // 0x5597 - Hardware Button Event
+      uint8_t btn = 0;
       if (klv.count(1) && !klv.at(1).empty()) {
-        uint8_t btn = klv.at(1)[0];
-        ESP_LOGI(TAG, "Hardware button event from MCU: 0x%02X", btn);
+        btn = klv.at(1)[0];
       }
+      ESP_LOGI(TAG, "Hardware button event from MCU: 0x%02X", btn);
+      if (btn == 0x01 || btn == 0x02) {
+        ESP_LOGI(TAG, "Front manual feed button pressed! Dispensing 1 portion...");
+        this->feed(1, true);
+      }
+      break;
+    }
+
+    case OPCODE_PLAY_AUDIO: { // 0x5598 - Play Audio Chime Notification
+      ESP_LOGI(TAG, "Coprocessor requested audio chime prompt playback");
       break;
     }
 
@@ -432,8 +596,8 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
 }
 
 void PPFR361SComponent::poll_status_() {
-  // Opcode 0x5590: Status Poll Query
-  this->send_frame_(0x02, 0x05, OPCODE_STATUS_POLL, 0x00, {});
+  // Opcode 0x5592: Device Status Query
+  this->send_frame_(0x02, OPCODE_STATUS_POLL, 0x00, {});
 }
 
 void PPFR361SComponent::feed(uint16_t portions, bool sound) {
@@ -441,21 +605,36 @@ void PPFR361SComponent::feed(uint16_t portions, bool sound) {
   if (portions > 20) portions = 20;
 
   ESP_LOGI(TAG, "Dispensing %d portion(s)...", portions);
+  this->is_dispensing_ = true;
+  this->dispense_start_time_ = millis();
+  this->dispense_requested_portions_ = portions;
+  this->dispense_timeout_ms_ = static_cast<uint32_t>(portions) * 4000 + 8000;
+  this->emergency_stop_triggered_ = false;
+
   if (this->status_text_sensor_ != nullptr && this->calib_state_ == CALIB_IDLE)
     this->status_text_sensor_->publish_state("Feeding...");
 
-  std::vector<std::pair<uint8_t, std::vector<uint8_t>>> items;
-  items.push_back({1, {1}}); // Key 1: Mode = 1 (portion)
-  items.push_back({2, {static_cast<uint8_t>(portions & 0xFF), static_cast<uint8_t>((portions >> 8) & 0xFF)}});
-  items.push_back({3, {0x3C, 0x00}}); // Key 3: Timeout = 60s
-  items.push_back({4, {static_cast<uint8_t>(sound ? 1 : 0)}});
+  // Exact 3 keys matching executeGrain (0x4200439e) in stock app_active.elf:
+  // frame_type: 0x02 (SC95F protocol master request)
+  // Key 1 (2B): Portions (uint16_t LE)
+  // Key 2 (2B): Cutoff limit (0x0000)
+  // Key 3 (1B): Feed Type (0 = manual executeGrain by rotation pulses; 1 is scheduled meal)
+  uint16_t target_weight = 0;
+  uint8_t feed_type = 0;
 
-  this->send_frame_(0x02, 0x04, OPCODE_FEED_CMD, 0x00, items);
+  ESP_LOGI(TAG, "Sending food output command (0x5590): portions=%d, target=%dg, type=%d...",
+           portions, target_weight, feed_type);
+  std::vector<std::pair<uint8_t, std::vector<uint8_t>>> items;
+  items.push_back({1, {static_cast<uint8_t>(portions & 0xFF), static_cast<uint8_t>((portions >> 8) & 0xFF)}});
+  items.push_back({2, {static_cast<uint8_t>(target_weight & 0xFF), static_cast<uint8_t>((target_weight >> 8) & 0xFF)}});
+  items.push_back({3, {feed_type}});
+
+  this->send_frame_(0x02, OPCODE_FEED_CMD, 0x00, items);
 }
 
 void PPFR361SComponent::tare_bowl() {
   ESP_LOGI(TAG, "Zeroing bowl scale...");
-  this->send_frame_(0x02, 0x05, OPCODE_TARE_BOWL, 0x00, {});
+  this->send_frame_(0x02, OPCODE_TARE_BOWL, 0x00, {});
 }
 
 void PPFR361SComponent::start_portion_calibration(uint16_t portions) {
@@ -477,7 +656,7 @@ void PPFR361SComponent::set_child_lock(bool locked) {
   ESP_LOGI(TAG, "Setting child lock: %s", locked ? "ON" : "OFF");
   std::vector<std::pair<uint8_t, std::vector<uint8_t>>> items;
   items.push_back({1, {static_cast<uint8_t>(locked ? 1 : 0)}});
-  this->send_frame_(0x02, 0x04, OPCODE_CHILD_LOCK, 0x00, items);
+  this->send_frame_(0x02, OPCODE_CHILD_LOCK, 0x00, items);
   if (this->child_lock_switch_ != nullptr)
     this->child_lock_switch_->publish_state(locked);
 }
@@ -486,7 +665,7 @@ void PPFR361SComponent::set_slow_feed(bool slow) {
   ESP_LOGI(TAG, "Setting slow feed mode: %s", slow ? "ON" : "OFF");
   std::vector<std::pair<uint8_t, std::vector<uint8_t>>> items;
   items.push_back({1, {static_cast<uint8_t>(slow ? 1 : 0)}});
-  this->send_frame_(0x02, 0x05, OPCODE_SLOW_FEED, 0x00, items);
+  this->send_frame_(0x02, OPCODE_SLOW_FEED, 0x00, items);
   if (this->slow_feed_switch_ != nullptr)
     this->slow_feed_switch_->publish_state(slow);
 }
@@ -496,7 +675,7 @@ void PPFR361SComponent::set_sleep_mode(bool sleep) {
   std::vector<std::pair<uint8_t, std::vector<uint8_t>>> items;
   items.push_back({1, {static_cast<uint8_t>(sleep ? 1 : 0)}});
   items.push_back({2, {0x00}});
-  this->send_frame_(0x02, 0x04, OPCODE_SLEEP_MODE, 0x00, items);
+  this->send_frame_(0x02, OPCODE_SLEEP_MODE, 0x00, items);
   if (this->sleep_mode_switch_ != nullptr)
     this->sleep_mode_switch_->publish_state(sleep);
 }
@@ -504,7 +683,7 @@ void PPFR361SComponent::set_sleep_mode(bool sleep) {
 void PPFR361SComponent::set_wifi_led(uint8_t mode) {
   std::vector<std::pair<uint8_t, std::vector<uint8_t>>> items;
   items.push_back({1, {mode}});
-  this->send_frame_(0x02, 0x14, OPCODE_WIFI_LED, 0x00, items);
+  this->send_frame_(0x02, OPCODE_WIFI_LED, 0x00, items);
 }
 
 void PPFR361SComponent::sync_clock(uint32_t epoch_sec) {
@@ -523,7 +702,7 @@ void PPFR361SComponent::sync_clock(uint32_t epoch_sec) {
     static_cast<uint8_t>((epoch_sec >> 16) & 0xFF),
     static_cast<uint8_t>((epoch_sec >> 24) & 0xFF)
   }});
-  this->send_frame_(0x02, 0x14, OPCODE_CLOCK_SYNC, 0x00, items);
+  this->send_frame_(0x02, OPCODE_CLOCK_SYNC, 0x00, items);
 
   // Auto-sync active schedule to coprocessor following clock sync
   this->sync_schedules_to_coprocessor();
@@ -616,33 +795,10 @@ void PPFR361SComponent::set_meal_schedule(uint8_t plan_idx, uint8_t meal_idx, bo
 }
 
 void PPFR361SComponent::sync_schedules_to_coprocessor() {
-  uint8_t active_idx = this->storage_.active_plan_idx;
-  if (active_idx >= MAX_PLANS) active_idx = 0;
-  const auto &plan = this->storage_.plans[active_idx];
-
-  std::vector<uint8_t> meals_payload;
-  uint8_t count = 0;
-  for (uint8_t i = 0; i < MAX_MEALS_PER_PLAN; i++) {
-    if (plan.meals[i].enabled) {
-      meals_payload.push_back(i); // meal_idx (0..9)
-      meals_payload.push_back(1); // enabled
-      meals_payload.push_back(plan.meals[i].hour);
-      meals_payload.push_back(plan.meals[i].minute);
-      meals_payload.push_back(static_cast<uint8_t>(plan.meals[i].portions & 0xFF));
-      meals_payload.push_back(static_cast<uint8_t>((plan.meals[i].portions >> 8) & 0xFF));
-      meals_payload.push_back(plan.meals[i].days);
-      meals_payload.push_back(plan.meals[i].sound ? 1 : 0);
-      count++;
-    }
-  }
-
-  std::vector<std::pair<uint8_t, std::vector<uint8_t>>> items;
-  items.push_back({1, {active_idx}});
-  items.push_back({2, {count}});
-  items.push_back({3, meals_payload});
-
-  ESP_LOGI(TAG, "Syncing active plan %u (%u meal(s)) to coprocessor EEPROM via 0x55A6...", active_idx + 1, count);
-  this->send_frame_(0x02, 0x14, OPCODE_PLAN_SYNC, 0x00, items);
+  // Schedules are evaluated locally on ESP32 in evaluate_schedules_().
+  // Disassembly of app_active.elf proves Opcode 0x55A6 is pet_feeder_uart_set_temperature_correct,
+  // NOT schedule synchronization. Do NOT send multi-byte schedule frames to 0x55A6.
+  this->update_schedule_sensors_();
 }
 
 void PPFR361SComponent::set_intelligent_feeding(bool enabled) {
