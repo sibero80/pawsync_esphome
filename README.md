@@ -299,7 +299,9 @@ Every UART frame begins with header byte `0xA5`:
 - **Byte 2**: Frame Sequence counter (`0x00`–`0xFF`).
 - **Bytes 3–4**: Payload Length in Little-Endian (`uint16_t`).
 - **Byte 5**: Checksum byte:
-  $$\text{Checksum} = \left(\sim \sum_{i \neq 5} \text{byte}_i\right) \pmod{256}$$
+  ```text
+  Checksum = (~sum(all frame bytes except index 5)) & 0xFF
+  ```
   *(The sum of all frame bytes modulo 256 equals `0xFF`).*
 
 #### Inner Payload Format (Protocol Version 0x02)
@@ -350,7 +352,7 @@ Each KLV item consists of:
 | `5` | 1 | `uint8` | Backup battery percentage (`0` = Not Installed, `1`–`100` = Percentage) |
 | `6` | 1 | `uint8` | Power source mode (`0` = AC Wall Power, `1` = Battery Backup Mode) |
 | `7` | 1 | `uint8` | Motor error code (`0` = Normal, `1` = Motor Jammed, `2` = Chute Blocked) |
-| `11` | 2 | `int16_LE` | Live bowl food weight in grams ($0\text{–}500\text{g}$) |
+| `11` | 2 | `int16_LE` | Live bowl food weight in grams (0–500 g) |
 
 #### Dispense Result (`0x5596`)
 
@@ -372,8 +374,10 @@ Each KLV item consists of:
 
 A critical finding from decompiling `app_active.elf`: **The feeder coprocessor does not dispense by portion count; it dispenses by target weight in grams.**
 
-When you command $P$ portions:
-$$\text{Target Grams} = \text{round}(P \times \text{grams\_per\_portion})$$
+When you command `P` portions:
+```text
+Target Grams = round(P * grams_per_portion)
+```
 
 If `child_lock` is active, the coprocessor rejects motor commands over UART. The ESPHome component automatically disengages the child lock for the duration of the dispense and restores it when feeding completes.
 
@@ -398,11 +402,14 @@ Every minute, the internal SNTP RTC compares the current day and minute against 
 
 #### Intelligent Leftover Subtraction Math
 When `intelligent_feeding` is enabled:
-$$\text{Residual Weight} = \text{Bowl Weight Sensor}$$
-$$\text{Target Meal Weight} = \text{Planned Portions} \times \text{grams\_per\_portion}$$
-- If $\text{Residual Weight} \ge \text{Target Meal Weight}$: **Dispense 0 portions** (bowl already has sufficient food).
-- If $\text{Residual Weight} < \text{Target Meal Weight}$:
-  $$\text{Portions to Dispense} = \left\lceil \frac{\text{Target Meal Weight} - \text{Residual Weight}}{\text{grams\_per\_portion}} \right\rceil$$
+```text
+Target Meal Weight = Planned Portions * grams_per_portion
+```
+- If `Residual Bowl Weight >= Target Meal Weight`: **Dispense 0 portions** (bowl already has sufficient food).
+- If `Residual Bowl Weight < Target Meal Weight`:
+  ```text
+  Portions to Dispense = ceil((Target Meal Weight - Residual Bowl Weight) / grams_per_portion)
+  ```
 
 ---
 
@@ -412,7 +419,7 @@ $$\text{Target Meal Weight} = \text{Planned Portions} \times \text{grams\_per\_p
 
 | Entity ID | Domain | Description |
 | :--- | :---: | :--- |
-| `sensor.pawsync_ppf_r361s_feeder_bowl_weight` | Sensor | Real-time pet bowl food weight in grams ($0\text{–}500\text{g}$) |
+| `sensor.pawsync_ppf_r361s_feeder_bowl_weight` | Sensor | Real-time pet bowl food weight in grams (0–500 g) |
 | `sensor.pawsync_ppf_r361s_feeder_last_feed_weight` | Sensor | Weight of food dispensed in the most recent meal |
 | `sensor.pawsync_ppf_r361s_feeder_portions_today` | Sensor | Cumulative portions dispensed today (resets at midnight) |
 | `sensor.pawsync_ppf_r361s_feeder_battery_level` | Sensor | Battery level percentage (reports `unavailable` if uninstalled) |
