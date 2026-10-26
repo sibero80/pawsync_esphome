@@ -36,13 +36,13 @@ If your feeder is currently running ESPHome and connected to Home Assistant, you
 
 1. In Home Assistant, open **Developer Tools** -> **States** (or navigate to your Pawsync Feeder device page under **Settings -> Devices & Services**).
 2. Locate the safety interlock switch:
-   - **Entity:** `switch.pawsync_ppf_r361s_feeder_unlock_factory_firmware_rollback`
+   - **Entity:** `switch.pawsync_feeder_unlock_factory_firmware_rollback` (or `switch.*_unlock_factory_firmware_rollback`)
    - **Friendly Name:** `Unlock Factory Firmware Rollback`
    - Toggle this switch to **ON**.
    > **Note:** This switch is an intentional software safety interlock that prevents accidental rollback triggers.
 
 3. Locate the rollback button:
-   - **Entity:** `button.pawsync_ppf_r361s_feeder_rollback_to_factory_firmware_slot_ota_1`
+   - **Entity:** `button.pawsync_feeder_rollback_to_factory_firmware_slot_ota_1` (or `button.*_rollback_to_factory_firmware*`)
    - **Friendly Name:** `Rollback to Factory Firmware (Slot ota_1)`
    - Click **Press** (or call the `button.press` service).
 
