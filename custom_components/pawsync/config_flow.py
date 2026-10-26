@@ -309,16 +309,15 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not local_ip and mac_address:
                 local_ip = resolve_ip_from_mac(mac_address)
 
-            if local_ip:
-                self.hass.async_create_task(
-                    async_auto_adopt_esphome(
-                        self.hass,
-                        host=local_ip,
-                        noise_psk=DEFAULT_NOISE_PSK,
-                        mac=mac_address,
-                        feeder_name=feeder_name,
-                    )
+            self.hass.async_create_task(
+                async_auto_adopt_esphome(
+                    self.hass,
+                    host=local_ip or "",
+                    noise_psk=DEFAULT_NOISE_PSK,
+                    mac=mac_address,
+                    feeder_name=feeder_name,
                 )
+            )
 
             # Successfully complete flow
             title = f"{feeder_name} ({mac_address or cid[:8]})"
