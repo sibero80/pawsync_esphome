@@ -145,25 +145,47 @@ async def _advance_esphome_flow(hass: Any, flow_id: str, step_id: str | None, no
             step_id = cur_res.get("step_id")
             _LOGGER.debug("Queried ESPHome flow %s current step: %s", flow_id, step_id)
 
-        # Step 1: If in discovery_confirm, submit empty dict to accept discovery
-        if step_id == "discovery_confirm":
-            _LOGGER.info("Accepting ESPHome discovery confirmation for flow %s...", flow_id)
-            conf_res = await hass.config_entries.flow.async_configure(flow_id, user_input={})
-            _LOGGER.debug("Discovery confirm result: %s", conf_res)
-            if _is_flow_type(conf_res, "create_entry"):
-                _LOGGER.info("ESPHome entry created directly from discovery confirm: %s", flow_id)
-                return True
-            step_id = conf_res.get("step_id")
+        # Loop through steps until entry is created or abort/failure
+        for _ in range(5):
+            if not step_id:
+                break
 
-        # Step 2: If in authenticate step, provide Noise PSK
-        if step_id == "authenticate":
-            _LOGGER.info("Supplying Noise PSK encryption key to ESPHome flow %s...", flow_id)
-            auth_res = await hass.config_entries.flow.async_configure(
-                flow_id,
-                user_input={"noise_psk": noise_psk},
-            )
-            _LOGGER.info("ESPHome flow %s authenticated result: %s", flow_id, auth_res.get("type"))
-            return _is_flow_type(auth_res, "create_entry", "abort")
+            if step_id == "discovery_confirm":
+                _LOGGER.info("Accepting ESPHome discovery confirmation for flow %s...", flow_id)
+                res = await hass.config_entries.flow.async_configure(flow_id, user_input={})
+                _LOGGER.debug("Discovery confirm result: %s", res)
+                if _is_flow_type(res, "create_entry"):
+                    _LOGGER.info("ESPHome entry created directly from discovery confirm: %s", flow_id)
+                    return True
+                step_id = res.get("step_id")
+
+            elif step_id == "encryption_key":
+                _LOGGER.info("Supplying Noise PSK encryption key to ESPHome flow %s...", flow_id)
+                res = await hass.config_entries.flow.async_configure(
+                    flow_id,
+                    user_input={"noise_psk": noise_psk},
+                )
+                _LOGGER.info("ESPHome flow %s encryption result: %s", flow_id, res.get("type"))
+                if _is_flow_type(res, "create_entry", "abort"):
+                    return True
+                step_id = res.get("step_id")
+
+            elif step_id == "authenticate":
+                _LOGGER.info("Supplying authentication to ESPHome flow %s...", flow_id)
+                res = await hass.config_entries.flow.async_configure(
+                    flow_id,
+                    user_input={"password": "", "noise_psk": noise_psk},
+                )
+                _LOGGER.info("ESPHome flow %s auth result: %s", flow_id, res.get("type"))
+                if _is_flow_type(res, "create_entry", "abort"):
+                    return True
+                step_id = res.get("step_id")
+
+            elif _is_flow_type(step_id, "create_entry"):
+                return True
+            else:
+                _LOGGER.debug("Unhandled ESPHome step %s for flow %s", step_id, flow_id)
+                break
 
     except Exception as err:
         _LOGGER.warning("Could not advance ESPHome flow %s: %s", flow_id, err)
@@ -223,6 +245,7 @@ async def async_auto_adopt_esphome(
                 match = (
                     (clean_mac and flow_uid and clean_mac in flow_uid)
                     or (clean_mac and clean_mac in str(flow).lower())
+                    or (mac and mac.lower() in str(flow).lower())
                     or (host and host in str(flow))
                     or len(progress_flows) == 1
                 )
