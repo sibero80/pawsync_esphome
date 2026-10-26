@@ -107,3 +107,5 @@ The custom Lovelace Feeder Card (`pawsync-feeder-card.js`) is automatically regi
 2. Click **Edit Dashboard** -> **Add Card**.
 3. Search for **PawSync Feeder Card** (or add a **Manual** card with `type: custom:pawsync-feeder-card`).
 4. The card will automatically detect all configured feeders and display the live stainless steel bowl scale, 7-plan schedule manager, and quick manual dispensing wheel!
+
+*(Note: If your browser displays "Custom element doesn't exist", do a hard refresh with **Ctrl+Shift+R** or add `/local/pawsync-feeder-card.js` as a JavaScript Module in Settings -> Dashboards -> Resources).*

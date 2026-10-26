@@ -16,7 +16,7 @@
  * - Visual Card Editor for Lovelace UI
  */
 
-const CARD_VERSION = "1.2.0";
+const CARD_VERSION = "1.2.1";
 
 console.info(
   `%c PAWSYNC-FEEDER-CARD %c v${CARD_VERSION} `,

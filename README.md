@@ -75,7 +75,7 @@ Convert your factory stock Pawsync feeder over Wi-Fi directly inside Home Assist
 
 ## Feeder Dashboard Card
 
-The integration automatically registers `/pawsync/pawsync-feeder-card.js` in your Home Assistant frontend.
+The integration automatically registers and serves the bundled Lovelace card at both `/pawsync/pawsync-feeder-card.js` and `/local/pawsync-feeder-card.js`.
 
 To add the card to your dashboard:
 1. Click **Edit Dashboard** -> **Add Card**.
@@ -87,6 +87,13 @@ type: custom:pawsync-feeder-card
 # title: "Fluffy's Feeder"
 # default_collapsed: true
 ```
+
+> [!TIP]
+> If Home Assistant shows `Custom element doesn't exist: pawsync-feeder-card`:
+> 1. Perform a hard browser refresh (**Ctrl + Shift + R** on Windows/Linux or **Cmd + Shift + R** on Mac) to clear stale cached scripts.
+> 2. Alternatively, in Home Assistant go to **Settings** -> **Dashboards** -> **Three dots (top right)** -> **Resources** -> **Add Resource**:
+>    - **URL**: `/local/pawsync-feeder-card.js`
+>    - **Resource type**: JavaScript Module (`module`)
 
 ---
 
