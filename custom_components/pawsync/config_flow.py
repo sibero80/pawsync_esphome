@@ -171,12 +171,17 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 for dev in self._discovered_devices:
                     if dev["cid"] == selected_cid:
                         self._selected_feeder_info = dev
+                        if dev.get("wifi_ssid") and not self._wifi_ssid:
+                            self._wifi_ssid = dev["wifi_ssid"]
                         break
                 return await self.async_step_prerequisites()
 
         device_options: dict[str, str] = {}
         for dev in self._discovered_devices:
-            label = f"{dev['name']} ({dev['model'] or 'PPF-R361S'}) - MAC: {dev['mac'] or 'N/A'}"
+            mac_str = dev.get("mac", "").strip()
+            mac_display = f"MAC: {mac_str}" if mac_str else "Wi-Fi Device"
+            model_display = dev.get("model") or "PPF-R361S"
+            label = f"{dev['name']} ({model_display}) - {mac_display}"
             device_options[dev["cid"]] = label
 
         default_feeder = next(iter(device_options.keys())) if device_options else None
@@ -209,7 +214,7 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         data_schema = vol.Schema(
             {
-                vol.Optional(CONF_SSID, default=""): str,
+                vol.Optional(CONF_SSID, default=self._wifi_ssid): str,
                 vol.Optional(CONF_WIFI_PASSWORD, default=""): str,
                 vol.Optional("confirm_prerequisites", default=True): bool,
             }

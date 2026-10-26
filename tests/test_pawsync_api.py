@@ -26,10 +26,13 @@ def test_normalize_devices():
     raw_devices = [
         {
             "cid": "cid-12345",
-            "mac": "aa:bb:cc:dd:ee:ff",
             "deviceName": "Living Room Feeder",
             "deviceModel": "VS_WB_PFM_PPF-R361S-WUS_US",
             "connectionStatus": "online",
+            "deviceProp": {
+                "wifiMac": "1097bd4c18d8",
+                "wifiName": "HomeWiFi",
+            },
         },
         {
             "deviceId": "cid-67890",
@@ -52,8 +55,9 @@ def test_normalize_devices():
 
     dev1 = normalized[0]
     assert dev1["cid"] == "cid-12345"
-    assert dev1["mac"] == "AA:BB:CC:DD:EE:FF"
+    assert dev1["mac"] == "10:97:BD:4C:18:D8"
     assert dev1["name"] == "Living Room Feeder"
+    assert dev1["wifi_ssid"] == "HomeWiFi"
     assert dev1["is_feeder"] is True
     assert dev1["status"] == "online"
 

@@ -405,10 +405,65 @@ class PawsyncApiClient:
         normalized = []
         for dev in raw_list:
             cid = dev.get("cid") or dev.get("deviceId") or dev.get("uuid") or ""
-            mac = dev.get("mac") or dev.get("macID") or dev.get("deviceMac") or ""
+            prop = dev.get("deviceProp") if isinstance(dev.get("deviceProp"), dict) else {}
+
+            # Extract MAC address from deviceProp or top-level fields
+            raw_mac = (
+                prop.get("wifiMac")
+                or prop.get("mac")
+                or prop.get("macID")
+                or prop.get("macId")
+                or dev.get("mac")
+                or dev.get("macID")
+                or dev.get("macId")
+                or dev.get("deviceMac")
+                or dev.get("wifiMac")
+                or ""
+            )
+
+            # Format 12-char hex string as standard colon-delimited MAC (XX:XX:XX:XX:XX:XX)
+            clean_mac = str(raw_mac).replace(":", "").replace("-", "").strip().upper()
+            if len(clean_mac) == 12:
+                formatted_mac = ":".join(clean_mac[i:i+2] for i in range(0, 12, 2))
+            else:
+                formatted_mac = str(raw_mac).strip().upper() if raw_mac else ""
+
             name = dev.get("deviceName") or dev.get("name") or "Pawsync Feeder"
-            model = dev.get("deviceModel") or dev.get("model") or dev.get("configModule") or ""
-            connection_status = dev.get("connectionStatus") or dev.get("deviceStatus") or "offline"
+            model = (
+                dev.get("configModel")
+                or dev.get("deviceModel")
+                or dev.get("model")
+                or dev.get("configModule")
+                or prop.get("configModel")
+                or prop.get("deviceModel")
+                or ""
+            )
+            connection_status = (
+                prop.get("connectionStatus")
+                or dev.get("connectionStatus")
+                or dev.get("deviceStatus")
+                or "offline"
+            )
+
+            # Extract Wi-Fi SSID if present in device properties
+            wifi_ssid = (
+                prop.get("wifiName")
+                or prop.get("wifiSsid")
+                or prop.get("ssid")
+                or dev.get("wifiName")
+                or dev.get("wifiSsid")
+                or dev.get("ssid")
+                or ""
+            )
+
+            # Extract firmware version
+            fw_version = ""
+            for fw in prop.get("firmwareInfos", []):
+                if isinstance(fw, dict) and (fw.get("isMainFw") or fw.get("type") == "mainFw"):
+                    fw_version = fw.get("version", "")
+                    break
+            if not fw_version:
+                fw_version = dev.get("currentFirmwareVersion") or prop.get("currentFirmwareVersion") or ""
 
             # Check if this device is a feeder (matches PPF-R361S or general pet feeder)
             is_feeder = (
@@ -420,13 +475,14 @@ class PawsyncApiClient:
 
             normalized.append({
                 "cid": str(cid),
-                "mac": str(mac).upper(),
+                "mac": formatted_mac,
                 "name": str(name),
                 "model": str(model),
+                "wifi_ssid": str(wifi_ssid),
                 "sub_device_no": dev.get("subDeviceNo", 0),
                 "status": str(connection_status),
                 "is_feeder": is_feeder,
-                "current_firmware_version": dev.get("currentFirmwareVersion", ""),
+                "current_firmware_version": str(fw_version),
                 "raw": dev,
             })
         return normalized
