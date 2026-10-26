@@ -16,7 +16,7 @@
  * - Visual Card Editor for Lovelace UI
  */
 
-const CARD_VERSION = "1.2.1";
+const CARD_VERSION = "1.2.2";
 
 console.info(
   `%c PAWSYNC-FEEDER-CARD %c v${CARD_VERSION} `,
@@ -266,7 +266,10 @@ class PawsyncFeederCard extends HTMLElement {
     const todayLocal = `${localYear}-${localMonth}-${localDay}`;
 
     const storageKey = `pawsync_eaten_${feeder.prefix}_${todayLocal}`;
-    let todayEaten = parseFloat(localStorage.getItem(storageKey) || "0");
+    let todayEaten = 0;
+    try {
+      todayEaten = parseFloat(localStorage.getItem(storageKey) || "0");
+    } catch (_) {}
 
     // 3. Inspect last_meal_amount and last_meal_time
     if (lastMealAmount && lastMealAmount.state && !isNaN(parseFloat(lastMealAmount.state))) {
@@ -300,18 +303,22 @@ class PawsyncFeederCard extends HTMLElement {
       if (isMealFromToday && lastAmount > 0) {
         if (todayEaten < lastAmount) {
           todayEaten = lastAmount;
-          localStorage.setItem(storageKey, todayEaten.toFixed(1));
+          try {
+            localStorage.setItem(storageKey, todayEaten.toFixed(1));
+          } catch (_) {}
         }
 
         // Accumulate if new distinct timestamp appears
         if (lastMealTime && lastMealTime.state) {
           const lastRecordedKey = `pawsync_last_recorded_ts_${feeder.prefix}`;
-          const lastRecorded = localStorage.getItem(lastRecordedKey);
-          if (lastRecorded && lastRecorded !== String(lastMealTime.state)) {
-            todayEaten += lastAmount;
-            localStorage.setItem(storageKey, todayEaten.toFixed(1));
-          }
-          localStorage.setItem(lastRecordedKey, String(lastMealTime.state));
+          try {
+            const lastRecorded = localStorage.getItem(lastRecordedKey);
+            if (lastRecorded && lastRecorded !== String(lastMealTime.state)) {
+              todayEaten += lastAmount;
+              localStorage.setItem(storageKey, todayEaten.toFixed(1));
+            }
+            localStorage.setItem(lastRecordedKey, String(lastMealTime.state));
+          } catch (_) {}
         }
       }
     }
@@ -1529,28 +1536,29 @@ class PawsyncFeederCardEditor extends HTMLElement {
 
   render() {
     if (!this._hass) return;
+    const config = this._config || {};
     this.innerHTML = `
       <div style="display:flex; flex-direction:column; gap:12px; padding:12px 0;">
         <div>
           <label style="font-weight:600; font-size:13px; display:block; margin-bottom:4px;">Card Title</label>
-          <input type="text" id="title" value="${this._config.title || "Pet Feeder"}" 
+          <input type="text" id="title" value="${config.title || "Pet Feeder"}" 
             style="width:100%; padding:8px; border-radius:6px; border:1px solid #ccc; box-sizing:border-box;">
         </div>
 
         <div>
           <label style="font-weight:600; font-size:13px; display:block; margin-bottom:4px;">Feeder Device Prefix (optional, leave blank for auto-detect)</label>
-          <input type="text" id="feeder_prefix" value="${this._config.feeder_prefix || ""}" placeholder="e.g. pawsync_ppf_r361s_feeder"
+          <input type="text" id="feeder_prefix" value="${config.feeder_prefix || ""}" placeholder="e.g. pawsync_ppf_r361s_feeder"
             style="width:100%; padding:8px; border-radius:6px; border:1px solid #ccc; box-sizing:border-box;">
         </div>
 
         <div>
           <label style="font-weight:600; font-size:13px; display:block; margin-bottom:4px;">Kibble Density (Grams per portion fallback)</label>
-          <input type="number" id="grams_per_portion" step="0.1" value="${this._config.grams_per_portion || 9.0}" 
+          <input type="number" id="grams_per_portion" step="0.1" value="${config.grams_per_portion || 9.0}" 
             style="width:100%; padding:8px; border-radius:6px; border:1px solid #ccc; box-sizing:border-box;">
         </div>
 
         <div style="display:flex; align-items:center; gap:8px;">
-          <input type="checkbox" id="default_collapsed" ${this._config.default_collapsed !== false ? "checked" : ""}>
+          <input type="checkbox" id="default_collapsed" ${config.default_collapsed !== false ? "checked" : ""}>
           <label for="default_collapsed" style="font-weight:600; font-size:13px;">Default Feeding Schedule to Collapsed</label>
         </div>
       </div>
@@ -1563,11 +1571,11 @@ class PawsyncFeederCardEditor extends HTMLElement {
 
     const updateConfig = () => {
       const newConfig = {
-        ...this._config,
-        title: titleInput.value,
-        feeder_prefix: prefixInput.value.trim() || undefined,
-        grams_per_portion: parseFloat(gramsInput.value) || 9.0,
-        default_collapsed: collapsedInput.checked,
+        ...(this._config || {}),
+        title: titleInput ? titleInput.value : "Pet Feeder",
+        feeder_prefix: prefixInput && prefixInput.value ? prefixInput.value.trim() : undefined,
+        grams_per_portion: gramsInput ? parseFloat(gramsInput.value) || 9.0 : 9.0,
+        default_collapsed: collapsedInput ? collapsedInput.checked : true,
       };
       const event = new CustomEvent("config-changed", {
         detail: { config: newConfig },
@@ -1577,20 +1585,26 @@ class PawsyncFeederCardEditor extends HTMLElement {
       this.dispatchEvent(event);
     };
 
-    titleInput.addEventListener("change", updateConfig);
-    prefixInput.addEventListener("change", updateConfig);
-    gramsInput.addEventListener("change", updateConfig);
-    collapsedInput.addEventListener("change", updateConfig);
+    if (titleInput) titleInput.addEventListener("change", updateConfig);
+    if (prefixInput) prefixInput.addEventListener("change", updateConfig);
+    if (gramsInput) gramsInput.addEventListener("change", updateConfig);
+    if (collapsedInput) collapsedInput.addEventListener("change", updateConfig);
   }
 }
 
-customElements.define("pawsync-feeder-card", PawsyncFeederCard);
-customElements.define("pawsync-feeder-card-editor", PawsyncFeederCardEditor);
+if (!customElements.get("pawsync-feeder-card")) {
+  customElements.define("pawsync-feeder-card", PawsyncFeederCard);
+}
+if (!customElements.get("pawsync-feeder-card-editor")) {
+  customElements.define("pawsync-feeder-card-editor", PawsyncFeederCardEditor);
+}
 
 window.customCards = window.customCards || [];
-window.customCards.push({
-  type: "pawsync-feeder-card",
-  name: "Pawsync Feeder Card",
-  preview: true,
-  description: "Interactive smart pet feeder card replicating the Pawsync app experience with graphical meal scheduling and multi-feeder support.",
-});
+if (!window.customCards.some((c) => c.type === "pawsync-feeder-card")) {
+  window.customCards.push({
+    type: "pawsync-feeder-card",
+    name: "Pawsync Feeder Card",
+    preview: true,
+    description: "Interactive smart pet feeder card replicating the Pawsync app experience with graphical meal scheduling and multi-feeder support.",
+  });
+}

@@ -93,22 +93,32 @@ async def async_setup_frontend(hass: HomeAssistant) -> None:
                 if hasattr(resources, "loaded") and not resources.loaded:
                     await resources.async_load()
 
-                if hasattr(resources, "async_items") and hasattr(resources, "async_create_item"):
-                    existing = [
-                        item.get("url")
-                        for item in resources.async_items()
-                        if CARD_FILENAME in item.get("url", "")
-                    ]
-                    if not existing:
+                target_url = f"/local/{CARD_FILENAME}?v={CARD_VERSION}"
+
+                if hasattr(resources, "async_items"):
+                    for item in resources.async_items():
+                        if CARD_FILENAME in item.get("url", ""):
+                            if item.get("url") != target_url and hasattr(resources, "async_update_item"):
+                                await resources.async_update_item(
+                                    item["id"],
+                                    {"res_type": "module", "url": target_url},
+                                )
+                                _LOGGER.info(
+                                    "Updated PawSync Card in Lovelace resources collection to %s",
+                                    target_url,
+                                )
+                            return
+
+                    if hasattr(resources, "async_create_item"):
                         await resources.async_create_item(
                             {
                                 "res_type": "module",
-                                "url": f"/local/{CARD_FILENAME}?v={CARD_VERSION}",
+                                "url": target_url,
                             }
                         )
                         _LOGGER.info(
-                            "Registered PawSync Card in Lovelace resources collection (/local/%s)",
-                            CARD_FILENAME,
+                            "Registered PawSync Card in Lovelace resources collection (%s)",
+                            target_url,
                         )
         except Exception as res_err:
             _LOGGER.debug("Lovelace resource auto-registration note: %s", res_err)
