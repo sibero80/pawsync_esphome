@@ -11,6 +11,16 @@ Convert your factory stock Pawsync feeder over Wi-Fi directly inside Home Assist
 
 ---
 
+> [!CAUTION]
+> ### ⚠️ EXPERIMENTAL SOFTWARE & LIABILITY DISCLAIMER
+> **PLEASE READ CAREFULLY BEFORE PROCEEDING:**
+> - **Community Project**: This integration, custom component, and ESPHome firmware are independent, community-driven reverse-engineering projects. They are **not** affiliated with, sponsored by, or endorsed by Pawsync, VeSync, or Etekcity.
+> - **No Warranty / Use At Your Own Risk**: This software is provided "AS IS", without warranty of any kind, express or implied. **The author and contributors accept NO RESPONSIBILITY or LIABILITY** for any bricked devices, damaged hardware, lost food, missed or incorrect pet feedings, or voided manufacturer warranties.
+> - **Risk of Bricking**: Modifying IoT device firmware carries inherent risks. A sudden power loss, interrupted wireless transfer, network failure, or an unverified hardware revision may render the feeder unbootable ("bricked"). If a device is bricked, wireless recovery is impossible and **physical disassembly with a 3.3V USB-to-UART serial adapter will be required** to restore it.
+> - **Strong Pre-Flash Recommendation**: While the in-HA wireless OTA wizard has been engineered with dual-partition failsafes and automated staging, **we STRONGLY RECOMMEND physically disassembling your feeder and taking a full 4MB byte-for-byte flash backup via UART before flashing custom firmware for the first time.** Instructions are provided below.
+
+---
+
 ## Key Features
 
 - **Guided In-HA Adoption Wizard**:
@@ -77,6 +87,110 @@ type: custom:pawsync-feeder-card
 # title: "Fluffy's Feeder"
 # default_collapsed: true
 ```
+
+---
+
+## 🛠️ Hardware Teardown, UART Pinout & Flash Backup/Restore Guide
+
+Even though the Home Assistant integration offers 100% wireless OTA flashing, **creating a physical flash backup before modifying any firmware is the safest best practice.** If anything goes wrong, a 4MB hardware flash backup guarantees your feeder can always be restored to its exact factory state.
+
+### Tools Required
+- **Phillips #1 screwdriver**
+- **3.3V USB-to-UART Serial Adapter** (e.g. CP2102, FT232RL, CH340G, or Raspberry Pi) — *Must be set to 3.3V logic level!*
+- **Dupont jumper wires** or test probes (pogo pins / alligator clips)
+- **Computer with Python 3 and `esptool` installed**:
+  ```bash
+  pip install esptool
+  ```
+
+---
+
+### Step 1: Safe Disassembly
+1. **Disconnect Power**: Unplug the 5V DC power adapter from the feeder.
+2. **Remove Batteries**: Open the battery compartment on the bottom and remove all 4 AA backup batteries.
+3. **Remove Removable Parts**: Remove the food hopper, lid, and stainless steel food bowl.
+4. **Expose Base Screws**: Flip the base upside down. Using a flat tool or fingernail, gently peel back the 4 circular rubber feet to expose the 4 recessed Phillips screws underneath.
+5. **Open Bottom Shell**:
+   - Unscrew the 4 Phillips screws.
+   - **CAUTION**: When lifting the bottom base plate, lift slowly and gently! The load cell scale wiring, motor cable, and front button harness connect between the lower and upper base. Do not pull or snap these wires.
+   - Locate the main logic board hosting the **Espressif ESP32-C3** module and the **Sinowealth SC95F8766P** coprocessor.
+
+---
+
+### Step 2: UART Pinout & Wiring
+
+Locate the labeled test pads adjacent to the ESP32-C3 module on the logic board:
+
+| Test Pad / Pin | ESP32-C3 Function | USB-to-UART Adapter Pin | Notes |
+| :--- | :--- | :--- | :--- |
+| **`GND`** | Ground | **`GND`** | Common ground reference |
+| **`TX`** | `GPIO21` (MCU TX / Serial) | **`RX`** | Adapter receives from ESP32 |
+| **`RX`** | `GPIO20` (MCU RX / Serial) | **`TX`** | Adapter transmits to ESP32 |
+| **`BOOT`** | `GPIO9` (Strapping Pin) | **`GND`** (Temporary) | Hold to GND during power-on for download mode |
+| **`3V3`** | 3.3V VDD | *Leave Disconnected* | **Do NOT connect adapter 3.3V!** |
+
+> [!WARNING]
+> **CRITICAL ELECTRICAL SAFETY RULES:**
+> 1. **3.3V LOGIC ONLY**: The ESP32-C3 is NOT 5V tolerant. Connecting 5V to the ESP32 GPIOs will permanently destroy the chip. Ensure your USB-UART adapter has its logic jumper set to **3.3V**!
+> 2. **POWER THE FEEDER FROM ITS DC ADAPTER**: Do **not** power the ESP32 from the USB-to-UART adapter's 3.3V power pin. Wi-Fi calibration and flash writes cause transient current spikes (>500mA) that will brown out or damage the serial adapter. Plug the feeder's original 5V DC power cable into the wall, and connect only `TX`, `RX`, and `GND` to your USB-UART adapter.
+
+---
+
+### Step 3: Enter Bootloader (Download) Mode
+1. Ensure the feeder is powered OFF (unplugged, no batteries).
+2. Connect `TX`, `RX`, and `GND` to your 3.3V USB-to-UART adapter, and plug the adapter into your computer.
+3. Use a jumper wire or paperclip to temporarily connect the **`BOOT` (`GPIO9`)** test pad to **`GND`**.
+4. While holding `GPIO9` to `GND`, plug in the feeder's 5V DC power cable.
+5. After 2 seconds, release `GPIO9`.
+6. Verify your computer detects the serial port (e.g. `/dev/ttyUSB0` on Linux, `/dev/cu.usbserial-*` on macOS, or `COM3` on Windows).
+7. Test communication:
+   ```bash
+   esptool.py --chip esp32c3 -p /dev/ttyUSB0 chip_id
+   ```
+   You should see: `Detecting chip type... ESP32-C3`.
+
+---
+
+### Step 4: Perform Full 4MB Byte-for-Byte Factory Backup
+Run the following command to create an exact, complete image of the entire 4MB SPI Flash:
+
+```bash
+esptool.py --chip esp32c3 -p /dev/ttyUSB0 -b 921600 read_flash 0x0 0x400000 pawsync_factory_4MB_backup.bin
+```
+
+> [!TIP]
+> **Verify Backup Integrity:**
+> - Ensure the resulting file is **exactly 4,194,304 bytes** (4MB):
+>   ```bash
+>   ls -la pawsync_factory_4MB_backup.bin
+>   ```
+> - Store this file in a safe location (cloud storage, external drive). This file contains your unit's unique factory calibration, MAC address, and pristine stock firmware.
+
+#### (Optional) Individual Partition Backups
+You can also back up individual partitions:
+```bash
+# Bootloader (0x0 - 0x10000)
+esptool.py --chip esp32c3 -p /dev/ttyUSB0 read_flash 0x0 0x10000 bootloader_backup.bin
+
+# Partition Table (0x10000 - 0x11000)
+esptool.py --chip esp32c3 -p /dev/ttyUSB0 read_flash 0x10000 0x1000 partitions_backup.bin
+
+# Stock Firmware Partition (0x160000 - 0x2A0000, 1.25MB)
+esptool.py --chip esp32c3 -p /dev/ttyUSB0 read_flash 0x160000 0x140000 stock_ota1_backup.bin
+```
+
+---
+
+### Step 5: Disaster Recovery (Restoring Full Factory Backup)
+If your feeder ever becomes unresponsive, fails an update, or is completely bricked:
+
+1. Put the device into bootloader mode (hold `GPIO9` to `GND` during power-up).
+2. Flash your 4MB backup image back to offset `0x0`:
+   ```bash
+   esptool.py --chip esp32c3 -p /dev/ttyUSB0 -b 921600 write_flash 0x0 pawsync_factory_4MB_backup.bin
+   ```
+3. Once completed, power-cycle the feeder (unplug and replug the 5V DC cable without holding `GPIO9`).
+4. The feeder will boot immediately into its original stock factory firmware with factory calibration and cloud credentials 100% restored.
 
 ---
 

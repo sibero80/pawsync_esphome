@@ -1,5 +1,9 @@
 # Stock Firmware Rollback & Disaster Recovery Runbook
 
+> [!CAUTION]
+> ### ⚠️ DISCLAIMER & TESTING NOTICE
+> This documentation and tools are provided "AS IS" for community testing. The authors take **no responsibility** for damaged hardware, bricked feeders, or voided warranties. Flashing custom firmware always carries risk. If an over-the-air update fails or bricks the unit, physical disassembly and a 3.3V USB-to-UART adapter are required to recover. **Always back up your full 4MB flash before flashing custom firmware.**
+
 This guide provides step-by-step instructions for safely rolling back the **Pawsync PPF-R361S Smart Pet Feeder** from ESPHome back to its original **factory stock firmware** (`ota_1` partition).
 
 This allows you to test the entire zero-touch wireless onboarding flow from a completely clean slate, or return the feeder to the official Pawsync/VeSync smartphone app at any time with zero hardware disassembly.
@@ -90,13 +94,22 @@ Upon reboot, the ESP-IDF second-stage bootloader searches for the first valid pa
 
 ---
 
-## Method 3: Clean Slate Recovery from 4MB Flash Dump
+## Method 3: Clean Slate Recovery from 4MB Flash Dump (Hardware Unbrick)
 
-If you ever need to restore the feeder to the 100% identical byte-for-byte factory state as it came out of the box:
+If your device becomes completely unresponsive or bricked, you can restore your original factory flash image using a 3.3V USB-to-UART serial adapter:
 
-```bash
-esptool.py --chip esp32c3 -p /dev/ttyACM0 -b 921600 write_flash 0x0 /root/pawsync_esphome/esp32c3_dump.bin
-```
+1. **Disassemble the feeder** (remove rubber feet, 4 bottom screws, carefully lift base plate).
+2. **Wire the UART adapter**:
+   - `GND` $\to$ `GND`
+   - `TX` (ESP32 `GPIO21`) $\to$ `RX` on adapter
+   - `RX` (ESP32 `GPIO20`) $\to$ `TX` on adapter
+   - Power the feeder using its **original 5V DC power adapter** (do **NOT** power via the UART adapter's 3.3V pin).
+3. **Enter Bootloader Mode**: Hold `GPIO9` (BOOT) to `GND` while plugging in the 5V DC power.
+4. **Flash the 4MB Backup**:
+   ```bash
+   esptool.py --chip esp32c3 -p /dev/ttyUSB0 -b 921600 write_flash 0x0 pawsync_factory_4MB_backup.bin
+   ```
+5. Power-cycle the feeder. It will boot into its pristine factory state.
 
 ---
 

@@ -2,6 +2,10 @@
 
 This guide walks you through the guided onboarding process for the **Pawsync PPF-R361S Smart Pet Feeder** into Home Assistant.
 
+> [!CAUTION]
+> ### ⚠️ COMMUNITY TESTING NOTICE
+> This project is in public community testing. The authors take **no responsibility** for bricked devices or damaged hardware. Before flashing custom firmware for the first time, **we strongly recommend performing a 4MB hardware flash backup via a 3.3V USB-UART adapter** so you can always restore your device if anything goes wrong. See [Teardown & Backup Guide](README.md#-hardware-teardown-uart-pinout--flash-backuprestore-guide).
+
 ---
 
 ## Overview

@@ -2,6 +2,10 @@
 
 This guide details the firmware architecture and flashing methods available for the **Pawsync PPF-R361S Smart Pet Feeder**.
 
+> [!CAUTION]
+> ### ⚠️ SAFETY NOTICE & DISCLAIMER
+> Modifying embedded firmware involves risk. Interrupted OTA flashing, power drops, or unverified hardware revisions can brick the device. The authors take **no responsibility** for damaged hardware or bricked devices. **We strongly recommend disassembling the unit and creating a 4MB UART flash backup before flashing custom firmware for the first time.** See [Hardware Teardown & Backup Guide in README](README.md#-hardware-teardown-uart-pinout--flash-backuprestore-guide).
+
 ---
 
 ## 1. Automated Wireless OTA Flashing (In-HA)
