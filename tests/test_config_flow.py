@@ -49,6 +49,8 @@ async def test_cloud_onboarding_full_flow():
     assert res1["step_id"] == "cloud"
 
     # Step 2: Cloud login
+    flow.hass.config.time_zone = "America/New_York"
+    flow.hass.config.country = "US"
     mock_client = AsyncMock()
     mock_client.async_login.return_value = {
         "account_id": "acc_777",
@@ -71,7 +73,6 @@ async def test_cloud_onboarding_full_flow():
             "email": "catlover@example.com",
             "password": "SuperSecretPassword",
             "country_code": "US",
-            "time_zone": "America/New_York",
         })
 
     assert res2["type"] == "form"

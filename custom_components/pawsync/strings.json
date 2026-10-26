@@ -14,8 +14,7 @@
         "data": {
           "email": "Account Email",
           "password": "Password",
-          "country_code": "Country / Region",
-          "time_zone": "Timezone"
+          "country_code": "Country / Region"
         }
       },
       "select_feeders": {

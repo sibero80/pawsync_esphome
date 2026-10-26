@@ -100,11 +100,16 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Step 2: Authenticate with Pawsync / VeSync Cloud."""
         errors: dict[str, str] = {}
 
+        # Automatically adopt Home Assistant system timezone and country
+        ha_tz = getattr(self.hass.config, "time_zone", DEFAULT_TIME_ZONE) or DEFAULT_TIME_ZONE
+        ha_country = getattr(self.hass.config, "country", None) or DEFAULT_COUNTRY_CODE
+        default_country = ha_country if ha_country in SUPPORTED_COUNTRIES else DEFAULT_COUNTRY_CODE
+
         if user_input is not None:
             email = user_input["email"].strip()
             password = user_input["password"]
-            country = user_input.get(CONF_COUNTRY_CODE, DEFAULT_COUNTRY_CODE)
-            tz = user_input.get(CONF_TIME_ZONE, DEFAULT_TIME_ZONE)
+            country = user_input.get(CONF_COUNTRY_CODE, default_country)
+            tz = ha_tz  # Adopted automatically from Home Assistant
 
             session = async_get_clientsession(self.hass)
             client = PawsyncApiClient(session=session, country_code=country, time_zone=tz)
@@ -139,10 +144,9 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             {
                 vol.Required("email"): str,
                 vol.Required("password"): str,
-                vol.Optional(CONF_COUNTRY_CODE, default=DEFAULT_COUNTRY_CODE): vol.In(
+                vol.Optional(CONF_COUNTRY_CODE, default=default_country): vol.In(
                     SUPPORTED_COUNTRIES
                 ),
-                vol.Optional(CONF_TIME_ZONE, default=DEFAULT_TIME_ZONE): str,
             }
         )
 
