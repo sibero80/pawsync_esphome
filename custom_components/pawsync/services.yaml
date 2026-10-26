@@ -1,0 +1,54 @@
+feed:
+  name: Dispense Kibble
+  description: Dispense a specific number of kibble portions immediately from the feeder.
+  fields:
+    portions:
+      name: Portions
+      description: Number of kibble portions to dispense (1 to 20).
+      required: true
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 20
+          step: 1
+          unit_of_measurement: portions
+          mode: box
+    entity_id:
+      name: Target Entity
+      description: Feeder device or entity to target.
+      required: false
+      selector:
+        target:
+          entity:
+            domain: button
+
+tare_scale:
+  name: Tare Bowl Scale
+  description: Zero out the weight reading on the stainless steel bowl scale.
+  fields:
+    entity_id:
+      name: Target Entity
+      description: Feeder bowl scale entity.
+      required: false
+      selector:
+        target:
+          entity:
+            domain: button
+
+calibrate_portion:
+  name: Calibrate Portion Density
+  description: Update the calibrated kibble weight in grams per portion.
+  fields:
+    grams_per_portion:
+      name: Grams Per Portion
+      description: Measured kibble weight per single portion dispenser rotation (e.g. 11.5).
+      required: true
+      default: 11.5
+      selector:
+        number:
+          min: 1.0
+          max: 50.0
+          step: 0.1
+          unit_of_measurement: g
+          mode: box

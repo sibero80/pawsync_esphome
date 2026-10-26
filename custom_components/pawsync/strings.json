@@ -1,0 +1,67 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "PawSync Smart Pet Feeder Setup",
+        "description": "Choose your onboarding method to connect your Pawsync PPF-R361S Smart Pet Feeder to Home Assistant.",
+        "data": {
+          "onboarding_mode": "Onboarding Mode"
+        }
+      },
+      "cloud": {
+        "title": "PawSync / VeSync Cloud Login",
+        "description": "Enter your Pawsync or VeSync account credentials. This one-time connection discovers your feeder's hardware Client ID (CID) and MAC address.",
+        "data": {
+          "email": "Account Email",
+          "password": "Password",
+          "country_code": "Country / Region",
+          "time_zone": "Timezone"
+        }
+      },
+      "select_feeders": {
+        "title": "Select Feeders to Adopt",
+        "description": "Select the feeder(s) you want to bring into Home Assistant for 100% local ESPHome control.",
+        "data": {
+          "selected_feeder": "Available Feeders"
+        }
+      },
+      "prerequisites": {
+        "title": "Pre-flight Verification",
+        "description": "Verifying Home Assistant environment for local ESPHome adoption.\n\n- Feeder must be connected to 2.4GHz Wi-Fi.\n- Local LAN communication enabled.\n\nEnter your Wi-Fi credentials below so the local ESPHome firmware connects automatically after flashing.",
+        "data": {
+          "wifi_ssid": "Home Wi-Fi SSID (2.4GHz)",
+          "wifi_password": "Wi-Fi Password",
+          "confirm_prerequisites": "I have verified the feeder is powered on and within Wi-Fi range"
+        }
+      },
+      "flash_wizard": {
+        "title": "Flashing Method Selection",
+        "description": "Select how you would like to install the local ESPHome firmware onto your feeder.\n\n- Wireless OTA (Recommended): Zero-touch wireless flashing over your local Wi-Fi network directly from Home Assistant.\n- WebSerial USB: Flash directly in your browser using a USB-C data cable.\n- Skip Flashing: Connect directly to a feeder that has already been flashed.",
+        "data": {
+          "flash_method": "Flashing Method"
+        }
+      },
+      "direct_esphome": {
+        "title": "Connect to Existing ESPHome Feeder",
+        "description": "Enter the IP address or hostname of your previously flashed ESPHome Pawsync Feeder.",
+        "data": {
+          "name": "Feeder Name",
+          "host": "Device IP Address or Hostname"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to cloud service or feeder host.",
+      "invalid_auth": "Invalid username, password, or account region. Check your credentials.",
+      "no_devices_found": "No compatible Pawsync or VeSync feeders were discovered in this account.",
+      "no_feeder_selected": "Please select at least one feeder to adopt.",
+      "stager_failed": "Failed to initialize the local OTA stager server.",
+      "ota_trigger_failed": "Failed to dispatch OTA conversion command to device via cloud relay.",
+      "unknown": "An unexpected error occurred. Check Home Assistant logs for details."
+    },
+    "abort": {
+      "already_configured": "This device or account is already configured in Home Assistant.",
+      "no_feeders": "No feeders available for adoption."
+    }
+  }
+}
