@@ -38,6 +38,7 @@ from .pawsync_api import (
     PawsyncApiClient,
     PawsyncAuthError,
     PawsyncConnectionError,
+    resolve_ip_from_mac,
 )
 from .vesync_relay import VeSyncRelay
 
@@ -178,10 +179,22 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         device_options: dict[str, str] = {}
         for dev in self._discovered_devices:
+            # Refresh local IP via ARP if not populated from cloud
             mac_str = dev.get("mac", "").strip()
-            mac_display = f"MAC: {mac_str}" if mac_str else "Wi-Fi Device"
+            ip_str = dev.get("ip", "").strip() or resolve_ip_from_mac(mac_str)
+            if ip_str:
+                dev["ip"] = ip_str
+
             model_display = dev.get("model") or "PPF-R361S"
-            label = f"{dev['name']} ({model_display}) - {mac_display}"
+
+            details = []
+            if ip_str:
+                details.append(f"IP: {ip_str}")
+            if mac_str:
+                details.append(f"MAC: {mac_str}")
+            detail_str = " | ".join(details) if details else "Wi-Fi Device"
+
+            label = f"{dev['name']} ({model_display}) - {detail_str}"
             device_options[dev["cid"]] = label
 
         default_feeder = next(iter(device_options.keys())) if device_options else None

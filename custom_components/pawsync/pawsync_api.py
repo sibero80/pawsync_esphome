@@ -41,6 +41,25 @@ def generate_trace_id() -> str:
     return f"PET{rand_suffix}{millis}-00001"
 
 
+def resolve_ip_from_mac(mac: str) -> str:
+    """Resolve local IP address from MAC address using Linux ARP cache."""
+    if not mac:
+        return ""
+    clean_target = mac.replace(":", "").replace("-", "").strip().lower()
+    try:
+        with open("/proc/net/arp", "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 4:
+                    ip_candidate = parts[0]
+                    arp_mac = parts[3].replace(":", "").replace("-", "").strip().lower()
+                    if arp_mac == clean_target and ip_candidate != "0.0.0.0":
+                        return ip_candidate
+    except Exception as err:
+        _LOGGER.debug("Could not read /proc/net/arp: %s", err)
+    return ""
+
+
 class PawsyncApiClient:
     """Async API Client for Pawsync / VeSync."""
 
@@ -465,6 +484,18 @@ class PawsyncApiClient:
             if not fw_version:
                 fw_version = dev.get("currentFirmwareVersion") or prop.get("currentFirmwareVersion") or ""
 
+            # Extract or resolve local IP address
+            local_ip = (
+                prop.get("localIp")
+                or prop.get("ip")
+                or prop.get("deviceIp")
+                or prop.get("wifiIp")
+                or dev.get("ip")
+                or ""
+            )
+            if not local_ip and formatted_mac:
+                local_ip = resolve_ip_from_mac(formatted_mac)
+
             # Check if this device is a feeder (matches PPF-R361S or general pet feeder)
             is_feeder = (
                 "PPF-R361S" in model
@@ -476,6 +507,7 @@ class PawsyncApiClient:
             normalized.append({
                 "cid": str(cid),
                 "mac": formatted_mac,
+                "ip": str(local_ip),
                 "name": str(name),
                 "model": str(model),
                 "wifi_ssid": str(wifi_ssid),
