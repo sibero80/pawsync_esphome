@@ -124,20 +124,36 @@ def resolve_arp_ip(mac: str) -> str:
     return ""
 
 
-async def _advance_esphome_flow(hass: Any, flow_id: str, step_id: str, noise_psk: str) -> bool:
-    """Advance an in-progress ESPHome config flow through discovery confirm and noise auth."""
-    from homeassistant import config_entries
+def _is_flow_type(res: dict[str, Any] | None, *types: str) -> bool:
+    """Check if flow result matches any expected type (handles string or Enum)."""
+    if not isinstance(res, dict):
+        return False
+    t = res.get("type")
+    if t is None:
+        return False
+    t_str = t.value if hasattr(t, "value") else str(t)
+    t_clean = t_str.lower().strip()
+    return t_clean in types or any(t_clean.endswith(f".{tp}") for tp in types)
 
+
+async def _advance_esphome_flow(hass: Any, flow_id: str, step_id: str | None, noise_psk: str) -> bool:
+    """Advance an in-progress ESPHome config flow through discovery confirm and noise auth."""
     try:
+        # If step_id is unknown or None, query the flow state without submitting
+        if not step_id:
+            cur_res = await hass.config_entries.flow.async_configure(flow_id)
+            step_id = cur_res.get("step_id")
+            _LOGGER.debug("Queried ESPHome flow %s current step: %s", flow_id, step_id)
+
         # Step 1: If in discovery_confirm, submit empty dict to accept discovery
         if step_id == "discovery_confirm":
             _LOGGER.info("Accepting ESPHome discovery confirmation for flow %s...", flow_id)
             conf_res = await hass.config_entries.flow.async_configure(flow_id, user_input={})
             _LOGGER.debug("Discovery confirm result: %s", conf_res)
-            step_id = conf_res.get("step_id")
-            if conf_res.get("type") == config_entries.FlowResultType.CREATE_ENTRY:
+            if _is_flow_type(conf_res, "create_entry"):
                 _LOGGER.info("ESPHome entry created directly from discovery confirm: %s", flow_id)
                 return True
+            step_id = conf_res.get("step_id")
 
         # Step 2: If in authenticate step, provide Noise PSK
         if step_id == "authenticate":
@@ -147,10 +163,8 @@ async def _advance_esphome_flow(hass: Any, flow_id: str, step_id: str, noise_psk
                 user_input={"noise_psk": noise_psk},
             )
             _LOGGER.info("ESPHome flow %s authenticated result: %s", flow_id, auth_res.get("type"))
-            return auth_res.get("type") in (
-                config_entries.FlowResultType.CREATE_ENTRY,
-                config_entries.FlowResultType.ABORT,
-            )
+            return _is_flow_type(auth_res, "create_entry", "abort")
+
     except Exception as err:
         _LOGGER.warning("Could not advance ESPHome flow %s: %s", flow_id, err)
 
@@ -242,27 +256,24 @@ async def async_auto_adopt_esphome(
                 max_attempts,
             )
             try:
-                from homeassistant import config_entries
-
                 result = await hass.config_entries.flow.async_init(
                     "esphome",
-                    context={"source": config_entries.SOURCE_USER},
+                    context={"source": "user"},
                     data={"host": host, "port": 6053},
                 )
                 _LOGGER.debug("ESPHome async_init result: %s", result)
 
-                res_type = result.get("type")
                 flow_id = result.get("flow_id")
                 step_id = result.get("step_id")
 
-                if res_type == config_entries.FlowResultType.FORM and flow_id:
+                if _is_flow_type(result, "form") and flow_id:
                     success = await _advance_esphome_flow(hass, flow_id, step_id, noise_psk)
                     if success:
                         return True
-                elif res_type == config_entries.FlowResultType.CREATE_ENTRY:
+                elif _is_flow_type(result, "create_entry"):
                     _LOGGER.info("ESPHome entry created for %s", host)
                     return True
-                elif res_type == config_entries.FlowResultType.ABORT and result.get("reason") == "already_in_progress":
+                elif _is_flow_type(result, "abort") and result.get("reason") == "already_in_progress":
                     # Pending flow is blocking user flow, advance the pending flow
                     for pflow in hass.config_entries.flow.async_progress_by_handler("esphome"):
                         p_id = pflow.get("flow_id")
