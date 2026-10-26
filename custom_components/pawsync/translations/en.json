@@ -61,6 +61,9 @@
     "abort": {
       "already_configured": "This device or account is already configured in Home Assistant.",
       "no_feeders": "No feeders available for adoption."
+    },
+    "create_entry": {
+      "default": "Feeder adopted successfully!\n\nDevice: {feeder_name}\nLocal IP: {ip}\n\nESPHome API Encryption Key:\n{noise_psk}\n\nHome Assistant is automatically adopting the ESPHome connection in the background. If prompted by Home Assistant for an encryption key, use the key above."
     }
   }
 }

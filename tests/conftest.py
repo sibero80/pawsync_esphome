@@ -21,11 +21,12 @@ if "homeassistant" not in sys.modules:
                 "errors": errors or {},
             }
 
-        def async_create_entry(self, title, data, description=None):
+        def async_create_entry(self, title, data, description=None, description_placeholders=None):
             return {
                 "type": "create_entry",
                 "title": title,
                 "data": data,
+                "description_placeholders": description_placeholders or {},
             }
 
     config_entries.ConfigFlow = ConfigFlow

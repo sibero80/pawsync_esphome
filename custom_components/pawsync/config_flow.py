@@ -24,6 +24,7 @@ from .const import (
     CONF_TOKEN,
     CONF_WIFI_PASSWORD,
     DEFAULT_COUNTRY_CODE,
+    DEFAULT_NOISE_PSK,
     DEFAULT_TIME_ZONE,
     DOMAIN,
     FLASH_METHOD_OTA,
@@ -32,7 +33,10 @@ from .const import (
     MODE_CLOUD_ONBOARDING,
     MODE_DIRECT_ESPHOME,
 )
-from .esphome_provisioner import async_provision_esphome_yaml
+from .esphome_provisioner import (
+    async_auto_adopt_esphome,
+    async_provision_esphome_yaml,
+)
 from .ota_stager import PawsyncOtaStager
 from .pawsync_api import (
     PawsyncApiClient,
@@ -300,6 +304,22 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     except Exception as err:
                         _LOGGER.warning("OTA wireless trigger failed: %s", err)
 
+            # Trigger background ESPHome auto-adoption
+            local_ip = self._selected_feeder_info.get("ip") or ""
+            if not local_ip and mac_address:
+                local_ip = resolve_ip_from_mac(mac_address)
+
+            if local_ip:
+                self.hass.async_create_task(
+                    async_auto_adopt_esphome(
+                        self.hass,
+                        host=local_ip,
+                        noise_psk=DEFAULT_NOISE_PSK,
+                        mac=mac_address,
+                        feeder_name=feeder_name,
+                    )
+                )
+
             # Successfully complete flow
             title = f"{feeder_name} ({mac_address or cid[:8]})"
             entry_data = {
@@ -310,11 +330,17 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "feeder_info": self._selected_feeder_info,
                 CONF_FLASH_METHOD: self._flash_method,
                 CONF_SSID: self._wifi_ssid,
+                CONF_HOST: local_ip,
             }
 
             return self.async_create_entry(
                 title=title,
                 data=entry_data,
+                description_placeholders={
+                    "feeder_name": feeder_name,
+                    "ip": local_ip or "Discovered IP",
+                    "noise_psk": DEFAULT_NOISE_PSK,
+                },
             )
 
         data_schema = vol.Schema(
@@ -347,12 +373,26 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             name = user_input.get("name", "Pawsync Feeder").strip()
             host = user_input[CONF_HOST].strip()
 
+            self.hass.async_create_task(
+                async_auto_adopt_esphome(
+                    self.hass,
+                    host=host,
+                    noise_psk=DEFAULT_NOISE_PSK,
+                    feeder_name=name,
+                )
+            )
+
             return self.async_create_entry(
                 title=name,
                 data={
                     CONF_ONBOARDING_MODE: MODE_DIRECT_ESPHOME,
                     CONF_HOST: host,
                     "name": name,
+                },
+                description_placeholders={
+                    "feeder_name": name,
+                    "ip": host,
+                    "noise_psk": DEFAULT_NOISE_PSK,
                 },
             )
 
