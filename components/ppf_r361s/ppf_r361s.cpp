@@ -65,6 +65,16 @@ void PPFR361SComponent::setup() {
     this->manual_feed_portions_number_->publish_state(1.0f);
   if (this->status_text_sensor_ != nullptr)
     this->status_text_sensor_->publish_state("Online / Standby");
+
+  // Load and restore calibration mode preference (Short 2-portion vs Stock 6-portion)
+  bool saved_cal_mode = false;
+  ESPPreferenceObject cal_pref = global_preferences->make_preference<bool>(fnv1_hash("ppf_cal_mode"), true);
+  if (cal_pref.load(&saved_cal_mode)) {
+    this->use_stock_calibration_ = saved_cal_mode;
+  }
+  if (this->stock_calibration_switch_ != nullptr)
+    this->stock_calibration_switch_->publish_state(this->use_stock_calibration_);
+
   this->publish_meal_stats_();
 }
 
@@ -149,6 +159,14 @@ void PPFR361SComponent::loop() {
     }
   }
 
+  // Stock Measuring timeout failsafe (60s limit)
+  if (this->calib_state_ == CALIB_STOCK_MEASURING && (now_ms - this->calib_timer_ >= 60000)) {
+    ESP_LOGW(TAG, "Stock calibration timed out after 60s without coprocessor completion frame");
+    this->calib_state_ = CALIB_IDLE;
+    if (this->status_text_sensor_ != nullptr)
+      this->status_text_sensor_->publish_state("Calibration Timed Out");
+  }
+
   // Meal eating session settle check (evaluates 60s stability window)
   this->check_eating_settle_timeout_();
 
@@ -202,6 +220,7 @@ void PPFR361SComponent::dump_config() {
   LOG_SWITCH("  ", "Slow Feed", this->slow_feed_switch_);
   LOG_SWITCH("  ", "Sleep Mode", this->sleep_mode_switch_);
   LOG_SWITCH("  ", "Intelligent Feeding", this->intelligent_feeding_switch_);
+  LOG_SWITCH("  ", "Stock Calibration Mode", this->stock_calibration_switch_);
   LOG_NUMBER("  ", "Manual Feed Portions", this->manual_feed_portions_number_);
 
   ESP_LOGCONFIG(TAG, "  On-Device Schedule: Active Plan %u, Portion Density: %.1fg/portion, Intelligent: %s",
@@ -690,9 +709,19 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
       ESP_LOGI(TAG, "Native measuring telemetry (0x5599): result=%d, gram=%dg, portions=%d",
                measure_result, meal_gram, serving_cnt);
 
-      if (measure_result == 0 && meal_gram > 0 && serving_cnt > 0) {
-        float calculated_g = static_cast<float>(meal_gram) / static_cast<float>(serving_cnt);
-        ESP_LOGI(TAG, "Stock single meal calibration success: %dg / %d portions = %.2fg/portion",
+      this->calib_state_ = CALIB_IDLE;
+      this->last_feed_complete_time_ = millis();
+      this->feed_just_finished_ = true;
+
+      if (measure_result == 0 && meal_gram > 0) {
+        // SC95F8766P coprocessor computes single_weight_g = total_dispensed / servings (e.g. 11g for 66g / 6).
+        // Key 2 is therefore already single_weight_g.
+        // If Key 2 is > 25g and serving_cnt > 1, defensively treat Key 2 as total weight across all servings.
+        float calculated_g = (meal_gram > 25 && serving_cnt > 1)
+                                ? (static_cast<float>(meal_gram) / static_cast<float>(serving_cnt))
+                                : static_cast<float>(meal_gram);
+
+        ESP_LOGI(TAG, "Stock single meal calibration success: %dg reported (servings=%d) -> %.2fg/portion",
                  meal_gram, serving_cnt, calculated_g);
         this->set_grams_per_portion(calculated_g);
         if (this->grams_per_portion_number_ != nullptr)
@@ -701,6 +730,29 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
         snprintf(buf, sizeof(buf), "Calibrated: %.1fg/portion", calculated_g);
         if (this->status_text_sensor_ != nullptr)
           this->status_text_sensor_->publish_state(buf);
+
+        // Schedule load-cell verification and precision refinement once bowl weight telemetry arrives
+        uint16_t sc = (serving_cnt > 0) ? serving_cnt : 6;
+        this->set_timeout("stock_calib_refine", 3500, [this, calculated_g, sc]() {
+          if (this->bowl_weight_sensor_ != nullptr && !std::isnan(this->bowl_weight_sensor_->state)) {
+            float bowl_w = this->bowl_weight_sensor_->state;
+            if (bowl_w > 10.0f) {
+              float refined_g = bowl_w / static_cast<float>(sc);
+              // Only refine if within +/-2.5g of coprocessor reported value
+              if (std::abs(refined_g - calculated_g) <= 2.5f && std::abs(refined_g - calculated_g) > 0.05f) {
+                ESP_LOGI(TAG, "Refined kibble density from bowl load cell: %.1fg / %d = %.2fg/portion",
+                         bowl_w, sc, refined_g);
+                this->set_grams_per_portion(refined_g);
+                if (this->grams_per_portion_number_ != nullptr)
+                  this->grams_per_portion_number_->publish_state(refined_g);
+                char rbuf[64];
+                snprintf(rbuf, sizeof(rbuf), "Calibrated: %.1fg/portion", refined_g);
+                if (this->status_text_sensor_ != nullptr)
+                  this->status_text_sensor_->publish_state(rbuf);
+              }
+            }
+          }
+        });
       } else if (measure_result != 0) {
         ESP_LOGW(TAG, "Stock single meal calibration failed (code %d)", measure_result);
         if (this->status_text_sensor_ != nullptr)
@@ -1071,8 +1123,20 @@ void PPFR361SComponent::set_grams_per_portion(float grams) {
   }
 }
 
+void PPFR361SComponent::set_use_stock_calibration(bool use_stock) {
+  ESP_LOGI(TAG, "Setting Calibration Mode: %s", use_stock ? "Stock (6-portion full cycle)" : "Short (2-portion quick cycle)");
+  this->use_stock_calibration_ = use_stock;
+  if (this->stock_calibration_switch_ != nullptr)
+    this->stock_calibration_switch_->publish_state(use_stock);
+  ESPPreferenceObject cal_pref = global_preferences->make_preference<bool>(fnv1_hash("ppf_cal_mode"), true);
+  cal_pref.save(&this->use_stock_calibration_);
+}
+
 void PPFR361SComponent::start_stock_measuring() {
   ESP_LOGI(TAG, "Sending stock coprocessor single meal measuring command (0x5599)...");
+  this->calib_state_ = CALIB_STOCK_MEASURING;
+  this->calib_timer_ = millis();
+
   if (this->status_text_sensor_ != nullptr)
     this->status_text_sensor_->publish_state("Calibrating: Measuring kibble density...");
 

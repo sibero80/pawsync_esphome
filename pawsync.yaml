@@ -200,6 +200,9 @@ switch:
       name: "Sleep Mode"
     intelligent_feeding:
       name: "Intelligent Feeding (Leftover Deduction)"
+    stock_calibration:
+      name: "Stock Calibration Mode (6-Portion Cycle)"
+      icon: "mdi:rotate-right"
   - platform: template
     name: "Unlock Factory Firmware Rollback"
     id: sw_unlock_factory_rollback

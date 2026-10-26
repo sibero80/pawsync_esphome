@@ -88,7 +88,8 @@ enum PortionCalibrationState {
   CALIB_IDLE,
   CALIB_TARING,
   CALIB_DISPENSING,
-  CALIB_SETTLING
+  CALIB_SETTLING,
+  CALIB_STOCK_MEASURING
 };
 
 enum EatingState : uint8_t {
@@ -166,6 +167,11 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   void set_slow_feed_switch(switch_::Switch *s) { this->slow_feed_switch_ = s; }
   void set_sleep_mode_switch(switch_::Switch *s) { this->sleep_mode_switch_ = s; }
   void set_intelligent_feeding_switch(switch_::Switch *s) { this->intelligent_feeding_switch_ = s; }
+  void set_stock_calibration_switch(switch_::Switch *s) { this->stock_calibration_switch_ = s; }
+
+  // Calibration Mode Configuration
+  void set_use_stock_calibration(bool use_stock);
+  bool get_use_stock_calibration() const { return this->use_stock_calibration_; }
 
   // Entity setters - Numbers
   void set_manual_feed_portions_number(number::Number *n) { this->manual_feed_portions_number_ = n; }
@@ -272,6 +278,7 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   PortionCalibrationState calib_state_{CALIB_IDLE};
   uint32_t calib_timer_{0};
   uint16_t calib_portions_{3};
+  bool use_stock_calibration_{false};
 
   // Schedule Storage in NVS
   ScheduleStorage storage_;
@@ -319,6 +326,7 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   switch_::Switch *slow_feed_switch_{nullptr};
   switch_::Switch *sleep_mode_switch_{nullptr};
   switch_::Switch *intelligent_feeding_switch_{nullptr};
+  switch_::Switch *stock_calibration_switch_{nullptr};
 
   number::Number *manual_feed_portions_number_{nullptr};
   number::Number *grams_per_portion_number_{nullptr};
@@ -353,6 +361,13 @@ class PPFR361SIntelligentFeedingSwitch : public switch_::Switch, public Parented
   }
 };
 
+class PPFR361SStockCalibrationSwitch : public switch_::Switch, public Parented<PPFR361SComponent> {
+ protected:
+  void write_state(bool state) override {
+    this->parent_->set_use_stock_calibration(state);
+  }
+};
+
 // Child button classes
 class PPFR361STareButton : public button::Button, public Parented<PPFR361SComponent> {
  protected:
@@ -376,7 +391,13 @@ class PPFR361SFeedButton : public button::Button, public Parented<PPFR361SCompon
 class PPFR361SCalibrateButton : public button::Button, public Parented<PPFR361SComponent> {
  protected:
   void press_action() override {
-    this->parent_->start_portion_calibration(2);
+    if (this->parent_->get_use_stock_calibration()) {
+      ESP_LOGI("button", "Calibrate button pressed: Launching Stock Calibration Mode (6-portion full cycle)...");
+      this->parent_->start_stock_measuring();
+    } else {
+      ESP_LOGI("button", "Calibrate button pressed: Launching Short Calibration Mode (2-portion quick cycle)...");
+      this->parent_->start_portion_calibration(2);
+    }
   }
 };
 
