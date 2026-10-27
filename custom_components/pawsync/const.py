@@ -2,7 +2,7 @@
 
 DOMAIN = "pawsync"
 NAME = "Pawsync Smart Pet Feeder"
-VERSION = "1.0.8"
+VERSION = "1.1.0"
 
 # Cloud API Endpoints
 PAWSYNC_API_BASE = "https://smartapi.pawsync.com"

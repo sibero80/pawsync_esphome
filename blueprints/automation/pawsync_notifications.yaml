@@ -1,0 +1,447 @@
+blueprint:
+  name: "Pawsync Feeder - Comprehensive Alert & Notification Manager"
+  description: >
+    Replicates the 14 official Pawsync native mobile app notification channels and alerts.
+    Dispatches targeted mobile app notifications for hardware alarms (motor jam, bowl overflow,
+    empty hopper, scale detachment), maintenance timers (desiccant, chute cleaning), and pet
+    eating telemetry (meal eaten, eating anomalies).
+  domain: automation
+  input:
+    notify_device:
+      name: Notification Device
+      description: The mobile app notification service to send alerts to.
+      selector:
+        device:
+          integration: mobile_app
+
+    feeder_name:
+      name: Feeder Friendly Name
+      description: Display name of the feeder used in notification text.
+      default: "Pawsync Feeder"
+      selector:
+        text:
+
+    # 14 Native Notification Toggles (matching FeederMsgNotify.java)
+    notify_feed:
+      name: "Dispense Confirmation (feedNotify)"
+      description: "Notify when a scheduled or manual meal is successfully dispensed."
+      default: true
+      selector:
+        boolean:
+
+    notify_take_food:
+      name: "Meal Eaten (takeFoodNotify)"
+      description: "Notify when your pet finishes eating with intake grams and duration."
+      default: true
+      selector:
+        boolean:
+
+    notify_food_low:
+      name: "Food Hopper Low (scantyFoodNotify)"
+      description: "Alert when the optical sensor detects low kibble in the tank (~150g left)."
+      default: true
+      selector:
+        boolean:
+
+    notify_food_empty:
+      name: "Food Hopper Empty (lackFoodNotify)"
+      description: "Critical alert when the hopper reaches 0g remaining."
+      default: true
+      selector:
+        boolean:
+
+    notify_jam:
+      name: "Motor Jam (jamFoodNotify)"
+      description: "Alert if the food distributor impeller is blocked or jammed."
+      default: true
+      selector:
+        boolean:
+
+    notify_bowl_overflow:
+      name: "Bowl Overflow Inhibit (blockFoodNotify)"
+      description: "Alert if >=150g is left in the bowl and dispensing is suspended."
+      default: true
+      selector:
+        boolean:
+
+    notify_chute_cleaning:
+      name: "Monthly Cleaning Reminder (cleanFoodPassagesNotify)"
+      description: "Reminder when the 30-day chute cleaning maintenance is due."
+      default: true
+      selector:
+        boolean:
+
+    notify_desiccant:
+      name: "Desiccant Replacement (replaceDesiccantNotify)"
+      description: "Reminder when the 30-day silica gel pack needs replacement."
+      default: true
+      selector:
+        boolean:
+
+    notify_battery_low:
+      name: "Low Battery Warning (lowBatteryNotify)"
+      description: "Alert when backup battery drops below 20% on DC outage."
+      default: true
+      selector:
+        boolean:
+
+    notify_outage:
+      name: "Power Outage / Battery Backup (outageNotify)"
+      description: "Alert when AC power is disconnected and feeder runs on battery."
+      default: true
+      selector:
+        boolean:
+
+    notify_scale_disconnected:
+      name: "Scale Base Detached (bowlConnAbnormalNotify)"
+      description: "Alert if the magnetic pogo-pin scale base is unseated."
+      default: true
+      selector:
+        boolean:
+
+    notify_bowl_removed:
+      name: "Food Bowl Removed (bowlNotPlacedNotify)"
+      description: "Alert if the stainless steel bowl is lifted off the scale."
+      default: false
+      selector:
+        boolean:
+
+    notify_abnormal_eating:
+      name: "Abnormal Eating Behavior (abnormalTakeFoodNotify)"
+      description: "Alert if eating speed deviates significantly (gobbling or lethargic)."
+      default: true
+      selector:
+        boolean:
+
+    notify_overload:
+      name: "Scale Overload (overLoadNotify)"
+      description: "Alert if strain-gauge detects weight over 1000g."
+      default: true
+      selector:
+        boolean:
+
+    # Entity Selectors
+    binary_sensor_motor_jammed:
+      name: Motor Jammed Binary Sensor
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: problem
+
+    binary_sensor_bowl_overflow:
+      name: Bowl Overflow Binary Sensor
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: problem
+
+    binary_sensor_food_low:
+      name: Food Hopper Low Binary Sensor
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: problem
+
+    binary_sensor_food_empty:
+      name: Food Hopper Empty Binary Sensor
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: problem
+
+    binary_sensor_power_adapter:
+      name: AC Power Binary Sensor
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: plug
+
+    binary_sensor_battery_low:
+      name: Battery Low Binary Sensor
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: battery
+
+    binary_sensor_cleaning_due:
+      name: Cleaning Due Binary Sensor
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: problem
+
+    sensor_desiccant_days:
+      name: Desiccant Days Remaining Sensor
+      selector:
+        entity:
+          domain: sensor
+
+    binary_sensor_scale_tray_connected:
+      name: Scale Tray Connected Binary Sensor
+      selector:
+        entity:
+          domain: binary_sensor
+
+    binary_sensor_bowl_present:
+      name: Bowl Present Binary Sensor
+      selector:
+        entity:
+          domain: binary_sensor
+
+    binary_sensor_abnormal_eating:
+      name: Abnormal Eating Binary Sensor
+      selector:
+        entity:
+          domain: binary_sensor
+
+    binary_sensor_scale_overload:
+      name: Scale Overload Binary Sensor
+      selector:
+        entity:
+          domain: binary_sensor
+
+variables:
+  feeder_name: !input feeder_name
+  notify_jam: !input notify_jam
+  notify_bowl_overflow: !input notify_bowl_overflow
+  notify_food_empty: !input notify_food_empty
+  notify_food_low: !input notify_food_low
+  notify_outage: !input notify_outage
+  notify_battery_low: !input notify_battery_low
+  notify_chute_cleaning: !input notify_chute_cleaning
+  notify_desiccant: !input notify_desiccant
+  notify_feed: !input notify_feed
+  notify_take_food: !input notify_take_food
+  notify_scale_disconnected: !input notify_scale_disconnected
+  notify_bowl_removed: !input notify_bowl_removed
+  notify_abnormal_eating: !input notify_abnormal_eating
+  notify_overload: !input notify_overload
+
+trigger:
+  - platform: state
+    entity_id: !input binary_sensor_motor_jammed
+    to: "on"
+    id: trigger_jam
+  - platform: state
+    entity_id: !input binary_sensor_bowl_overflow
+    to: "on"
+    id: trigger_overflow
+  - platform: state
+    entity_id: !input binary_sensor_food_empty
+    to: "on"
+    id: trigger_empty
+  - platform: state
+    entity_id: !input binary_sensor_food_low
+    to: "on"
+    id: trigger_low
+  - platform: state
+    entity_id: !input binary_sensor_power_adapter
+    to: "off"
+    id: trigger_outage
+  - platform: state
+    entity_id: !input binary_sensor_battery_low
+    to: "on"
+    id: trigger_battery_low
+  - platform: state
+    entity_id: !input binary_sensor_cleaning_due
+    to: "on"
+    id: trigger_cleaning
+  - platform: numeric_state
+    entity_id: !input sensor_desiccant_days
+    below: 1
+    id: trigger_desiccant
+  - platform: event
+    event_type: esphome.pawsync_feed_completed
+    id: trigger_feed_event
+  - platform: event
+    event_type: esphome.pawsync_meal_eaten
+    id: trigger_meal_event
+  - platform: state
+    entity_id: !input binary_sensor_scale_tray_connected
+    to: "off"
+    id: trigger_scale_disconnect
+  - platform: state
+    entity_id: !input binary_sensor_bowl_present
+    to: "off"
+    id: trigger_bowl_remove
+  - platform: state
+    entity_id: !input binary_sensor_abnormal_eating
+    to: "on"
+    id: trigger_abnormal_eating
+  - platform: state
+    entity_id: !input binary_sensor_scale_overload
+    to: "on"
+    id: trigger_scale_overload
+
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: trigger_jam
+          - condition: template
+            value_template: "{{ notify_jam }}"
+        sequence:
+          - domain: mobile_app
+            type: notify
+            device_id: !input notify_device
+            title: "{{ feeder_name }} Alert: Motor Jammed!"
+            message: "Please clear blockage in the food distributor impeller."
+
+      - conditions:
+          - condition: trigger
+            id: trigger_overflow
+          - condition: template
+            value_template: "{{ notify_bowl_overflow }}"
+        sequence:
+          - domain: mobile_app
+            type: notify
+            device_id: !input notify_device
+            title: "{{ feeder_name }} Alert: Bowl Overflow"
+            message: "There is too much food left in the bowl (>=150g). Dispensing was canceled to prevent clogging."
+
+      - conditions:
+          - condition: trigger
+            id: trigger_empty
+          - condition: template
+            value_template: "{{ notify_food_empty }}"
+        sequence:
+          - domain: mobile_app
+            type: notify
+            device_id: !input notify_device
+            title: "{{ feeder_name }} Alert: Tank Empty!"
+            message: "The feeder tank is empty. Time for a refill!"
+
+      - conditions:
+          - condition: trigger
+            id: trigger_low
+          - condition: template
+            value_template: "{{ notify_food_low }}"
+        sequence:
+          - domain: mobile_app
+            type: notify
+            device_id: !input notify_device
+            title: "{{ feeder_name }} Notice: Food Low"
+            message: "Feeder tank is running low. Time for a refill soon!"
+
+      - conditions:
+          - condition: trigger
+            id: trigger_outage
+          - condition: template
+            value_template: "{{ notify_outage }}"
+        sequence:
+          - domain: mobile_app
+            type: notify
+            device_id: !input notify_device
+            title: "{{ feeder_name }} Warning: AC Power Outage"
+            message: "The adapter is disconnected and feeder is running on backup battery power."
+
+      - conditions:
+          - condition: trigger
+            id: trigger_battery_low
+          - condition: template
+            value_template: "{{ notify_battery_low }}"
+        sequence:
+          - domain: mobile_app
+            type: notify
+            device_id: !input notify_device
+            title: "{{ feeder_name }} Warning: Battery Low"
+            message: "Backup batteries are below 20%. Time to replace the D-cell batteries!"
+
+      - conditions:
+          - condition: trigger
+            id: trigger_cleaning
+          - condition: template
+            value_template: "{{ notify_chute_cleaning }}"
+        sequence:
+          - domain: mobile_app
+            type: notify
+            device_id: !input notify_device
+            title: "{{ feeder_name }} Maintenance: Clean Feeder"
+            message: "Time to clean the pet feeder! Monthly maintenance reminder."
+
+      - conditions:
+          - condition: trigger
+            id: trigger_desiccant
+          - condition: template
+            value_template: "{{ notify_desiccant }}"
+        sequence:
+          - domain: mobile_app
+            type: notify
+            device_id: !input notify_device
+            title: "{{ feeder_name }} Maintenance: Replace Silica Gel"
+            message: "Time to replace the silica gel desiccant pack!"
+
+      - conditions:
+          - condition: trigger
+            id: trigger_feed_event
+          - condition: template
+            value_template: "{{ notify_feed }}"
+        sequence:
+          - domain: mobile_app
+            type: notify
+            device_id: !input notify_device
+            title: "{{ feeder_name }}: Meal Dispensed"
+            message: "Successfully dispensed {{ trigger.event.data.portions }} portion(s) ({{ trigger.event.data.weight_g }}g)."
+
+      - conditions:
+          - condition: trigger
+            id: trigger_meal_event
+          - condition: template
+            value_template: "{{ notify_take_food }}"
+        sequence:
+          - domain: mobile_app
+            type: notify
+            device_id: !input notify_device
+            title: "{{ feeder_name }}: Meal Finished"
+            message: "Pet ate {{ trigger.event.data.consumed_g }}g in {{ trigger.event.data.duration_s }}s (speed: {{ trigger.event.data.speed_g_per_min }} g/min)."
+
+      - conditions:
+          - condition: trigger
+            id: trigger_scale_disconnect
+          - condition: template
+            value_template: "{{ notify_scale_disconnected }}"
+        sequence:
+          - domain: mobile_app
+            type: notify
+            device_id: !input notify_device
+            title: "{{ feeder_name }} Error: Scale Disconnected"
+            message: "Please make sure the weighing tray is securely connected to the feeder base."
+
+      - conditions:
+          - condition: trigger
+            id: trigger_bowl_remove
+          - condition: template
+            value_template: "{{ notify_bowl_removed }}"
+        sequence:
+          - domain: mobile_app
+            type: notify
+            device_id: !input notify_device
+            title: "{{ feeder_name }} Notice: Bowl Removed"
+            message: "The food bowl has been lifted off the scale platform."
+
+      - conditions:
+          - condition: trigger
+            id: trigger_abnormal_eating
+          - condition: template
+            value_template: "{{ notify_abnormal_eating }}"
+        sequence:
+          - domain: mobile_app
+            type: notify
+            device_id: !input notify_device
+            title: "{{ feeder_name }} Warning: Abnormal Eating Speed"
+            message: "Pet eating rate deviated significantly from normal baseline."
+
+      - conditions:
+          - condition: trigger
+            id: trigger_scale_overload
+          - condition: template
+            value_template: "{{ notify_overload }}"
+        sequence:
+          - domain: mobile_app
+            type: notify
+            device_id: !input notify_device
+            title: "{{ feeder_name }} Error: Scale Overload (>1000g)"
+            message: "Weighing over limit, please check the bowl and remove excess weight."
+
+mode: queued
+max: 10

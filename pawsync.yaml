@@ -5,7 +5,10 @@ substitutions:
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
-  comment: "Local ESPHome firmware for Pawsync PPF-R361S Pet Feeder with On-Device 7-Plan Scheduler"
+  comment: "Local ESPHome firmware for Pawsync PPF-R361S Pet Feeder with On-Device 7-Plan Scheduler (v1.1.0)"
+  project:
+    name: "sibero80.pawsync_esphome"
+    version: "1.1.0"
   min_version: 2024.6.0
   on_boot:
     - priority: 2000.0
@@ -206,6 +209,15 @@ switch:
     tank_projection_mode:
       name: "Tank Projection: Rolling Average Mode"
       icon: "mdi:chart-timeline-variant"
+    manual_feed_chime:
+      name: "Manual Feed Chime"
+      icon: "mdi:bell-ring"
+    scheduled_feed_chime:
+      name: "Scheduled Feed Chime"
+      icon: "mdi:bell-badge"
+    precision_mode:
+      name: "Precision Mode (Closed-Loop Compensation)"
+      icon: "mdi:target-variant"
   - platform: template
     name: "Unlock Factory Firmware Rollback"
     id: sw_unlock_factory_rollback
@@ -221,6 +233,25 @@ ppf_r361s:
   id: feeder_bridge
   uart_id: uart_coprocessor
   time_id: sntp_time
+  on_meal_eaten:
+    - homeassistant.event:
+        event: esphome.pawsync_meal_eaten
+        data:
+          consumed_g: !lambda 'return consumed_g;'
+          duration_s: !lambda 'return duration_s;'
+          speed_g_per_min: !lambda 'return speed_g_per_min;'
+  on_feed_completed:
+    - homeassistant.event:
+        event: esphome.pawsync_feed_completed
+        data:
+          portions: !lambda 'return portions;'
+          weight_g: !lambda 'return weight_g;'
+  on_tank_low:
+    - homeassistant.event:
+        event: esphome.pawsync_tank_low
+        data:
+          remaining_g: !lambda 'return remaining_g;'
+          days_left: !lambda 'return days_left;'
 
 sensor:
   - platform: ppf_r361s
@@ -234,10 +265,14 @@ sensor:
       name: "Portions Today"
     desiccant_days:
       name: "Desiccant Days Remaining"
+    cleaning_days:
+      name: "Chute Cleaning Days Remaining"
     last_meal_consumed:
       name: "Last Meal Amount Consumed"
     last_meal_duration:
       name: "Last Meal Duration"
+    eating_speed:
+      name: "Last Meal Eating Speed"
     total_eaten_today:
       name: "Total Eaten Today"
     food_in_tank:
@@ -253,14 +288,30 @@ binary_sensor:
       name: "AC Power Connected"
     food_low:
       name: "Food Level Low"
+    food_empty:
+      name: "Food Tank Empty"
     motor_jammed:
       name: "Motor Jammed"
+    bowl_overflow:
+      name: "Bowl Overflow (>150g)"
+    scale_overload:
+      name: "Scale Overload (>1000g)"
     bowl_connected:
       name: "Bowl Scale Connected"
+    scale_tray_connected:
+      name: "Scale Tray Connected"
+    bowl_present:
+      name: "Food Bowl Present"
     battery_installed:
       name: "Battery Installed"
+    battery_low:
+      name: "Battery Low (<20%)"
+    cleaning_due:
+      name: "Chute Cleaning Due"
     pet_eating:
       name: "Pet Eating"
+    abnormal_eating:
+      name: "Abnormal Eating Detected"
 
 text_sensor:
   - platform: ppf_r361s
@@ -276,6 +327,10 @@ text_sensor:
       name: "Last Adjusted Meal"
     last_adjusted_meal_notes:
       name: "Last Adjusted Meal Notes"
+    food_tank_category:
+      name: "Food Tank Category"
+    last_refill_time:
+      name: "Last Refill Time"
 
 button:
   - platform: ppf_r361s
@@ -289,6 +344,8 @@ button:
       name: "Calibrate Kibble Density (Empty Bowl First)"
     reset_desiccant:
       name: "Reset Desiccant (30 Days)"
+    reset_cleaning:
+      name: "Reset Chute Cleaning (30 Days)"
     reset_tank_food:
       name: "Reset Tank Food (Refill)"
   - platform: template

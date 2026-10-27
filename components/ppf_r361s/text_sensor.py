@@ -12,6 +12,8 @@ CONF_SCHEDULE_SUMMARY = "schedule_summary"
 CONF_LAST_MEAL_TIME = "last_meal_time"
 CONF_LAST_ADJUSTED_MEAL = "last_adjusted_meal"
 CONF_LAST_ADJUSTED_MEAL_NOTES = "last_adjusted_meal_notes"
+CONF_FOOD_TANK_CATEGORY = "food_tank_category"
+CONF_LAST_REFILL_TIME = "last_refill_time"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -33,6 +35,12 @@ CONFIG_SCHEMA = cv.Schema(
         ),
         cv.Optional(CONF_LAST_ADJUSTED_MEAL_NOTES): text_sensor.text_sensor_schema(
             icon="mdi:note-text-outline",
+        ),
+        cv.Optional(CONF_FOOD_TANK_CATEGORY): text_sensor.text_sensor_schema(
+            icon="mdi:gauge",
+        ),
+        cv.Optional(CONF_LAST_REFILL_TIME): text_sensor.text_sensor_schema(
+            icon="mdi:calendar-refresh",
         ),
     }
 )
@@ -58,3 +66,9 @@ async def to_code(config):
     if last_adj_notes_config := config.get(CONF_LAST_ADJUSTED_MEAL_NOTES):
         sens = await text_sensor.new_text_sensor(last_adj_notes_config)
         cg.add(hub.set_last_adjusted_meal_notes_sensor(sens))
+    if food_tank_cat_config := config.get(CONF_FOOD_TANK_CATEGORY):
+        sens = await text_sensor.new_text_sensor(food_tank_cat_config)
+        cg.add(hub.set_food_tank_category_sensor(sens))
+    if last_refill_config := config.get(CONF_LAST_REFILL_TIME):
+        sens = await text_sensor.new_text_sensor(last_refill_config)
+        cg.add(hub.set_last_refill_time_sensor(sens))

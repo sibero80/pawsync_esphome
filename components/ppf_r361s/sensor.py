@@ -20,8 +20,10 @@ CONF_BATTERY_LEVEL = "battery_level"
 CONF_LAST_FEED_WEIGHT = "last_feed_weight"
 CONF_PORTIONS_TODAY = "portions_today"
 CONF_DESICCANT_DAYS = "desiccant_days"
+CONF_CLEANING_DAYS = "cleaning_days"
 CONF_LAST_MEAL_CONSUMED = "last_meal_consumed"
 CONF_LAST_MEAL_DURATION = "last_meal_duration"
+CONF_EATING_SPEED = "eating_speed"
 CONF_TOTAL_EATEN_TODAY = "total_eaten_today"
 CONF_FOOD_IN_TANK = "food_in_tank"
 CONF_FOOD_TANK_LEVEL = "food_tank_level"
@@ -64,6 +66,13 @@ CONFIG_SCHEMA = cv.Schema(
             state_class=STATE_CLASS_MEASUREMENT,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
+        cv.Optional(CONF_CLEANING_DAYS): sensor.sensor_schema(
+            unit_of_measurement="d",
+            icon="mdi:broom",
+            accuracy_decimals=0,
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
         cv.Optional(CONF_LAST_MEAL_CONSUMED): sensor.sensor_schema(
             unit_of_measurement="g",
             icon="mdi:silverware-fork-knife",
@@ -76,6 +85,12 @@ CONFIG_SCHEMA = cv.Schema(
             icon="mdi:timer-outline",
             accuracy_decimals=0,
             device_class=DEVICE_CLASS_DURATION,
+            state_class=STATE_CLASS_MEASUREMENT,
+        ),
+        cv.Optional(CONF_EATING_SPEED): sensor.sensor_schema(
+            unit_of_measurement="g/min",
+            icon="mdi:speedometer",
+            accuracy_decimals=1,
             state_class=STATE_CLASS_MEASUREMENT,
         ),
         cv.Optional(CONF_TOTAL_EATEN_TODAY): sensor.sensor_schema(
@@ -126,12 +141,18 @@ async def to_code(config):
     if desiccant_days_config := config.get(CONF_DESICCANT_DAYS):
         sens = await sensor.new_sensor(desiccant_days_config)
         cg.add(hub.set_desiccant_days_sensor(sens))
+    if cleaning_days_config := config.get(CONF_CLEANING_DAYS):
+        sens = await sensor.new_sensor(cleaning_days_config)
+        cg.add(hub.set_cleaning_days_sensor(sens))
     if last_meal_consumed_config := config.get(CONF_LAST_MEAL_CONSUMED):
         sens = await sensor.new_sensor(last_meal_consumed_config)
         cg.add(hub.set_last_meal_consumed_sensor(sens))
     if last_meal_duration_config := config.get(CONF_LAST_MEAL_DURATION):
         sens = await sensor.new_sensor(last_meal_duration_config)
         cg.add(hub.set_last_meal_duration_sensor(sens))
+    if eating_speed_config := config.get(CONF_EATING_SPEED):
+        sens = await sensor.new_sensor(eating_speed_config)
+        cg.add(hub.set_eating_speed_sensor(sens))
     if total_eaten_today_config := config.get(CONF_TOTAL_EATEN_TODAY):
         sens = await sensor.new_sensor(total_eaten_today_config)
         cg.add(hub.set_total_eaten_today_sensor(sens))

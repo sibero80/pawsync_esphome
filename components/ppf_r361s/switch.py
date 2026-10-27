@@ -12,6 +12,9 @@ CONF_SLEEP_MODE = "sleep_mode"
 CONF_INTELLIGENT_FEEDING = "intelligent_feeding"
 CONF_STOCK_CALIBRATION = "stock_calibration"
 CONF_TANK_PROJECTION_MODE = "tank_projection_mode"
+CONF_MANUAL_FEED_CHIME = "manual_feed_chime"
+CONF_SCHEDULED_FEED_CHIME = "scheduled_feed_chime"
+CONF_PRECISION_MODE = "precision_mode"
 
 PPFR361SChildLockSwitch = ppf_r361s_ns.class_("PPFR361SChildLockSwitch", switch_.Switch)
 PPFR361SSlowFeedSwitch = ppf_r361s_ns.class_("PPFR361SSlowFeedSwitch", switch_.Switch)
@@ -19,6 +22,9 @@ PPFR361SSleepModeSwitch = ppf_r361s_ns.class_("PPFR361SSleepModeSwitch", switch_
 PPFR361SIntelligentFeedingSwitch = ppf_r361s_ns.class_("PPFR361SIntelligentFeedingSwitch", switch_.Switch)
 PPFR361SStockCalibrationSwitch = ppf_r361s_ns.class_("PPFR361SStockCalibrationSwitch", switch_.Switch)
 PPFR361STankProjectionModeSwitch = ppf_r361s_ns.class_("PPFR361STankProjectionModeSwitch", switch_.Switch)
+PPFR361SManualFeedChimeSwitch = ppf_r361s_ns.class_("PPFR361SManualFeedChimeSwitch", switch_.Switch)
+PPFR361SScheduledFeedChimeSwitch = ppf_r361s_ns.class_("PPFR361SScheduledFeedChimeSwitch", switch_.Switch)
+PPFR361SPrecisionModeSwitch = ppf_r361s_ns.class_("PPFR361SPrecisionModeSwitch", switch_.Switch)
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -46,6 +52,18 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_TANK_PROJECTION_MODE): switch_.switch_schema(
             PPFR361STankProjectionModeSwitch,
             icon="mdi:chart-timeline-variant",
+        ),
+        cv.Optional(CONF_MANUAL_FEED_CHIME): switch_.switch_schema(
+            PPFR361SManualFeedChimeSwitch,
+            icon="mdi:bell-ring",
+        ),
+        cv.Optional(CONF_SCHEDULED_FEED_CHIME): switch_.switch_schema(
+            PPFR361SScheduledFeedChimeSwitch,
+            icon="mdi:bell-badge",
+        ),
+        cv.Optional(CONF_PRECISION_MODE): switch_.switch_schema(
+            PPFR361SPrecisionModeSwitch,
+            icon="mdi:target-variant",
         ),
     }
 )
@@ -77,3 +95,15 @@ async def to_code(config):
         sw = await switch_.new_switch(projection_mode_config)
         await cg.register_parented(sw, hub)
         cg.add(hub.set_tank_projection_mode_switch(sw))
+    if manual_chime_config := config.get(CONF_MANUAL_FEED_CHIME):
+        sw = await switch_.new_switch(manual_chime_config)
+        await cg.register_parented(sw, hub)
+        cg.add(hub.set_manual_feed_chime_switch(sw))
+    if sched_chime_config := config.get(CONF_SCHEDULED_FEED_CHIME):
+        sw = await switch_.new_switch(sched_chime_config)
+        await cg.register_parented(sw, hub)
+        cg.add(hub.set_scheduled_feed_chime_switch(sw))
+    if precision_mode_config := config.get(CONF_PRECISION_MODE):
+        sw = await switch_.new_switch(precision_mode_config)
+        await cg.register_parented(sw, hub)
+        cg.add(hub.set_precision_mode_switch(sw))

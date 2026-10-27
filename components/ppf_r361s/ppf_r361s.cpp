@@ -46,28 +46,54 @@ void PPFR361SComponent::setup() {
     this->battery_level_sensor_->publish_state(NAN);
   if (this->battery_installed_sensor_ != nullptr)
     this->battery_installed_sensor_->publish_state(false);
+  if (this->battery_low_sensor_ != nullptr)
+    this->battery_low_sensor_->publish_state(false);
   if (this->bowl_weight_sensor_ != nullptr)
     this->bowl_weight_sensor_->publish_state(0.0f);
   if (this->power_adapter_sensor_ != nullptr)
     this->power_adapter_sensor_->publish_state(true);
   if (this->food_low_sensor_ != nullptr)
     this->food_low_sensor_->publish_state(false);
+  if (this->food_empty_sensor_ != nullptr)
+    this->food_empty_sensor_->publish_state(false);
   if (this->motor_jammed_sensor_ != nullptr)
     this->motor_jammed_sensor_->publish_state(false);
+  if (this->bowl_overflow_sensor_ != nullptr)
+    this->bowl_overflow_sensor_->publish_state(false);
+  if (this->scale_overload_sensor_ != nullptr)
+    this->scale_overload_sensor_->publish_state(false);
   if (this->bowl_connected_sensor_ != nullptr)
     this->bowl_connected_sensor_->publish_state(true);
+  if (this->scale_tray_connected_sensor_ != nullptr)
+    this->scale_tray_connected_sensor_->publish_state(true);
+  if (this->bowl_present_sensor_ != nullptr)
+    this->bowl_present_sensor_->publish_state(true);
   if (this->pet_eating_sensor_ != nullptr)
     this->pet_eating_sensor_->publish_state(false);
+  if (this->abnormal_eating_sensor_ != nullptr)
+    this->abnormal_eating_sensor_->publish_state(false);
+  if (this->eating_speed_sensor_ != nullptr)
+    this->eating_speed_sensor_->publish_state(0.0f);
   if (this->portions_today_sensor_ != nullptr)
     this->portions_today_sensor_->publish_state(this->portions_today_);
   if (this->desiccant_days_sensor_ != nullptr)
     this->desiccant_days_sensor_->publish_state(30.0f);
+  if (this->cleaning_days_sensor_ != nullptr)
+    this->cleaning_days_sensor_->publish_state(30.0f);
+  if (this->cleaning_due_sensor_ != nullptr)
+    this->cleaning_due_sensor_->publish_state(false);
   if (this->last_feed_weight_sensor_ != nullptr)
     this->last_feed_weight_sensor_->publish_state(0.0f);
   if (this->manual_feed_portions_number_ != nullptr)
     this->manual_feed_portions_number_->publish_state(1.0f);
   if (this->status_text_sensor_ != nullptr)
     this->status_text_sensor_->publish_state("Online / Standby");
+  if (this->manual_feed_chime_switch_ != nullptr)
+    this->manual_feed_chime_switch_->publish_state(this->storage_.manual_feed_sound);
+  if (this->scheduled_feed_chime_switch_ != nullptr)
+    this->scheduled_feed_chime_switch_->publish_state(this->storage_.scheduled_feed_sound);
+  if (this->precision_mode_switch_ != nullptr)
+    this->precision_mode_switch_->publish_state(this->storage_.precision_mode);
 
   // Load and restore calibration mode preference (Short 2-portion vs Stock 6-portion)
   bool saved_cal_mode = false;
@@ -215,29 +241,46 @@ void PPFR361SComponent::dump_config() {
   LOG_SENSOR("  ", "Battery Level", this->battery_level_sensor_);
   LOG_SENSOR("  ", "Last Feed Weight", this->last_feed_weight_sensor_);
   LOG_SENSOR("  ", "Portions Dispensed Today", this->portions_today_sensor_);
+  LOG_SENSOR("  ", "Desiccant Days Remaining", this->desiccant_days_sensor_);
+  LOG_SENSOR("  ", "Cleaning Days Remaining", this->cleaning_days_sensor_);
   LOG_SENSOR("  ", "Last Meal Consumed", this->last_meal_consumed_sensor_);
   LOG_SENSOR("  ", "Last Meal Duration", this->last_meal_duration_sensor_);
+  LOG_SENSOR("  ", "Eating Speed", this->eating_speed_sensor_);
   LOG_SENSOR("  ", "Total Eaten Today", this->total_eaten_today_sensor_);
   LOG_SENSOR("  ", "Food in Tank", this->food_in_tank_sensor_);
   LOG_SENSOR("  ", "Food Tank Level", this->food_tank_level_sensor_);
   LOG_SENSOR("  ", "Days to Empty Tank", this->days_to_empty_tank_sensor_);
   LOG_BINARY_SENSOR("  ", "Power Adapter (AC)", this->power_adapter_sensor_);
   LOG_BINARY_SENSOR("  ", "Food Hopper Low", this->food_low_sensor_);
+  LOG_BINARY_SENSOR("  ", "Food Hopper Empty", this->food_empty_sensor_);
   LOG_BINARY_SENSOR("  ", "Motor Jammed", this->motor_jammed_sensor_);
+  LOG_BINARY_SENSOR("  ", "Bowl Overflow", this->bowl_overflow_sensor_);
+  LOG_BINARY_SENSOR("  ", "Scale Overload", this->scale_overload_sensor_);
   LOG_BINARY_SENSOR("  ", "Bowl Connected", this->bowl_connected_sensor_);
+  LOG_BINARY_SENSOR("  ", "Scale Tray Connected", this->scale_tray_connected_sensor_);
+  LOG_BINARY_SENSOR("  ", "Bowl Present", this->bowl_present_sensor_);
+  LOG_BINARY_SENSOR("  ", "Battery Installed", this->battery_installed_sensor_);
+  LOG_BINARY_SENSOR("  ", "Battery Low", this->battery_low_sensor_);
+  LOG_BINARY_SENSOR("  ", "Cleaning Due", this->cleaning_due_sensor_);
   LOG_BINARY_SENSOR("  ", "Pet Eating", this->pet_eating_sensor_);
+  LOG_BINARY_SENSOR("  ", "Abnormal Eating Detected", this->abnormal_eating_sensor_);
   LOG_TEXT_SENSOR("  ", "Feeder Status", this->status_text_sensor_);
   LOG_TEXT_SENSOR("  ", "Next Scheduled Meal", this->next_meal_sensor_);
   LOG_TEXT_SENSOR("  ", "Schedule Summary", this->schedule_summary_sensor_);
   LOG_TEXT_SENSOR("  ", "Last Meal Time", this->last_meal_time_sensor_);
   LOG_TEXT_SENSOR("  ", "Last Adjusted Meal", this->last_adjusted_meal_sensor_);
   LOG_TEXT_SENSOR("  ", "Last Adjusted Meal Notes", this->last_adjusted_meal_notes_sensor_);
+  LOG_TEXT_SENSOR("  ", "Food Tank Category", this->food_tank_category_sensor_);
+  LOG_TEXT_SENSOR("  ", "Last Refill Time", this->last_refill_time_sensor_);
   LOG_SWITCH("  ", "Child Lock", this->child_lock_switch_);
   LOG_SWITCH("  ", "Slow Feed", this->slow_feed_switch_);
   LOG_SWITCH("  ", "Sleep Mode", this->sleep_mode_switch_);
   LOG_SWITCH("  ", "Intelligent Feeding", this->intelligent_feeding_switch_);
   LOG_SWITCH("  ", "Stock Calibration Mode", this->stock_calibration_switch_);
   LOG_SWITCH("  ", "Tank Projection Mode", this->tank_projection_mode_switch_);
+  LOG_SWITCH("  ", "Manual Feed Chime", this->manual_feed_chime_switch_);
+  LOG_SWITCH("  ", "Scheduled Feed Chime", this->scheduled_feed_chime_switch_);
+  LOG_SWITCH("  ", "Precision Mode", this->precision_mode_switch_);
   LOG_NUMBER("  ", "Manual Feed Portions", this->manual_feed_portions_number_);
   LOG_NUMBER("  ", "Tank Refill Volume", this->tank_refill_volume_number_);
   LOG_NUMBER("  ", "Tank Refill Weight", this->tank_refill_weight_number_);
@@ -330,6 +373,11 @@ void PPFR361SComponent::parse_rx_buffer_() {
     }
 
     uint16_t payload_len = this->rx_buffer_[3] | (static_cast<uint16_t>(this->rx_buffer_[4]) << 8);
+    if (payload_len > 256) {
+      ESP_LOGW(TAG, "UART frame invalid payload length (%u > 256). Dropping sync byte.", payload_len);
+      this->rx_buffer_.erase(this->rx_buffer_.begin());
+      continue;
+    }
     size_t full_frame_len = payload_len + 6;
 
     if (this->rx_buffer_.size() < full_frame_len) {
@@ -417,6 +465,12 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
           this->save_tank_storage_to_nvs_();
           this->publish_tank_stats_();
         }
+
+        if (food_low) {
+          float rem = this->tank_storage_.current_food_in_tank_g;
+          float days = (this->days_to_empty_tank_sensor_ != nullptr) ? this->days_to_empty_tank_sensor_->state : 0.0f;
+          this->tank_low_callback_.call(rem, days);
+        }
       }
 
       // Key 5: battery_percent (0 = not installed / absent, 1-100% installed)
@@ -432,22 +486,46 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
             this->battery_level_sensor_->publish_state(NAN);
           }
         }
+        if (this->battery_low_sensor_ != nullptr) {
+          bool low = (!this->ac_power_ && installed && bat < 20);
+          this->battery_low_sensor_->publish_state(low);
+        }
       } else {
         if (this->battery_installed_sensor_ != nullptr)
           this->battery_installed_sensor_->publish_state(false);
         if (this->battery_level_sensor_ != nullptr)
           this->battery_level_sensor_->publish_state(NAN);
+        if (this->battery_low_sensor_ != nullptr)
+          this->battery_low_sensor_->publish_state(false);
       }
 
       // Update desiccant days remaining (30-day countdown matching stock APK)
       if (this->desiccant_days_sensor_ != nullptr) {
         uint32_t now_epoch = this->time_ != nullptr ? this->time_->now().timestamp : 0;
         uint8_t days_left = 30;
-        if (now_epoch > 1700000000 && this->storage_.last_desiccant_reset_epoch > 0) {
+        if (now_epoch > 1700000000 && this->storage_.last_desiccant_reset_epoch > 0 &&
+            now_epoch >= this->storage_.last_desiccant_reset_epoch) {
           uint32_t elapsed_days = (now_epoch - this->storage_.last_desiccant_reset_epoch) / 86400;
           days_left = elapsed_days >= 30 ? 0 : (30 - elapsed_days);
         }
         this->desiccant_days_sensor_->publish_state(days_left);
+      }
+
+      // Update chute cleaning days remaining (30-day countdown matching cleanFoodpassages)
+      if (this->cleaning_days_sensor_ != nullptr || this->cleaning_due_sensor_ != nullptr) {
+        uint32_t now_epoch = this->time_ != nullptr ? this->time_->now().timestamp : 0;
+        uint8_t clean_days_left = 30;
+        if (now_epoch > 1700000000 && this->storage_.last_cleaning_reset_epoch > 0 &&
+            now_epoch >= this->storage_.last_cleaning_reset_epoch) {
+          uint32_t elapsed_clean_days = (now_epoch - this->storage_.last_cleaning_reset_epoch) / 86400;
+          clean_days_left = elapsed_clean_days >= 30 ? 0 : (30 - elapsed_clean_days);
+        }
+        if (this->cleaning_days_sensor_ != nullptr) {
+          this->cleaning_days_sensor_->publish_state(clean_days_left);
+        }
+        if (this->cleaning_due_sensor_ != nullptr) {
+          this->cleaning_due_sensor_->publish_state(clean_days_left == 0);
+        }
       }
 
       // Key 6: power_mode (0 = AC Adapter, 1 = Battery Backup)
@@ -492,6 +570,20 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
           this->bowl_weight_sensor_->publish_state(w_f);
         if (this->bowl_connected_sensor_ != nullptr)
           this->bowl_connected_sensor_->publish_state(true);
+        if (this->scale_tray_connected_sensor_ != nullptr)
+          this->scale_tray_connected_sensor_->publish_state(true);
+        if (this->bowl_present_sensor_ != nullptr)
+          this->bowl_present_sensor_->publish_state(true);
+
+        // Overflow check (BLOCK_FOOD >= 150g)
+        if (this->bowl_overflow_sensor_ != nullptr) {
+          this->bowl_overflow_sensor_->publish_state(w_f >= 150.0f);
+        }
+        // Overload check (OVERLOAD > 1000g)
+        if (this->scale_overload_sensor_ != nullptr) {
+          this->scale_overload_sensor_->publish_state(w_f > 1000.0f);
+        }
+
         this->process_bowl_weight_sample_(w_f);
       }
 
@@ -601,6 +693,8 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
 
           if (this->status_text_sensor_ != nullptr && this->calib_state_ == CALIB_IDLE)
             this->status_text_sensor_->publish_state("Feeding Complete");
+
+          this->feed_completed_callback_.call(delta_portions, grams);
         }
         if (this->motor_jammed_sensor_ != nullptr)
           this->motor_jammed_sensor_->publish_state(false);
@@ -677,6 +771,10 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
           this->bowl_weight_sensor_->publish_state(0.0f);
         if (this->bowl_connected_sensor_ != nullptr)
           this->bowl_connected_sensor_->publish_state(true);
+        if (this->scale_tray_connected_sensor_ != nullptr)
+          this->scale_tray_connected_sensor_->publish_state(true);
+        if (this->bowl_present_sensor_ != nullptr)
+          this->bowl_present_sensor_->publish_state(true);
 
         if (this->calib_state_ == CALIB_TARING) {
           ESP_LOGI(TAG, "Calibration tare confirmed 0g. Dispensing %d test portions...", this->calib_portions_);
@@ -694,6 +792,8 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
         if (this->calib_state_ == CALIB_TARING) this->calib_state_ = CALIB_IDLE;
         if (this->bowl_connected_sensor_ != nullptr)
           this->bowl_connected_sensor_->publish_state(false);
+        if (this->scale_tray_connected_sensor_ != nullptr)
+          this->scale_tray_connected_sensor_->publish_state(false);
         if (this->status_text_sensor_ != nullptr)
           this->status_text_sensor_->publish_state("Bowl Connection Error");
       } else if (result == 2) {
@@ -706,6 +806,10 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
         if (this->calib_state_ == CALIB_TARING) this->calib_state_ = CALIB_IDLE;
         if (this->bowl_connected_sensor_ != nullptr)
           this->bowl_connected_sensor_->publish_state(false);
+        if (this->scale_tray_connected_sensor_ != nullptr)
+          this->scale_tray_connected_sensor_->publish_state(true);
+        if (this->bowl_present_sensor_ != nullptr)
+          this->bowl_present_sensor_->publish_state(false);
         if (this->status_text_sensor_ != nullptr)
           this->status_text_sensor_->publish_state("Bowl Not Placed");
       } else {
@@ -857,6 +961,18 @@ void PPFR361SComponent::feed(uint16_t portions, bool sound) {
   if (portions == 0) portions = 1;
   if (portions > 20) portions = 20;
 
+  // Safety Check: Bowl Overflow Inhibit (BLOCK_FOOD / BLOCK_FOOD_FEEDING)
+  // If the food bowl already contains >= 150g, refuse to dispense to prevent chute blockage and motor jam.
+  if (this->bowl_weight_sensor_ != nullptr && this->bowl_weight_sensor_->has_state() && this->bowl_weight_sensor_->state >= 150.0f) {
+    ESP_LOGW(TAG, "Bowl overflow detected (%.1fg >= 150g). Feed aborted to prevent distributor blockage.",
+             this->bowl_weight_sensor_->state);
+    if (this->bowl_overflow_sensor_ != nullptr)
+      this->bowl_overflow_sensor_->publish_state(true);
+    if (this->status_text_sensor_ != nullptr)
+      this->status_text_sensor_->publish_state("Aborted: Bowl Overflow (>150g)");
+    return;
+  }
+
   float grams_per_portion = this->storage_.grams_per_portion > 0 ? this->storage_.grams_per_portion : 8.0f;
   uint16_t target_weight = static_cast<uint16_t>(std::round(portions * grams_per_portion));
   // If calibrating, ensure target_weight is sufficient to dispense all test portions without premature cutoff
@@ -878,30 +994,33 @@ void PPFR361SComponent::feed(uint16_t portions, bool sound) {
   if (this->status_text_sensor_ != nullptr && this->calib_state_ == CALIB_IDLE)
     this->status_text_sensor_->publish_state("Feeding...");
 
+  auto send_feed_frame = [this, target_weight, feed_type]() {
+    // Exact 3 keys matching stock protocol (pet_feeder_uart_set_food_output / executeGrain):
+    // frame_type: 0x22 (SC95F protocol master request with ACK flag)
+    // Key 1 (2B): Target Weight in Grams (uint16_t LE)
+    // Key 2 (2B): Cutoff limit (0x0000)
+    // Key 3 (1B): Feed Type (0 = remote meal command matching stock executeGrain)
+    ESP_LOGI(TAG, "Sending food output command (0x5590): target=%dg, cutoff=0g, type=%d...",
+             target_weight, feed_type);
+    std::vector<std::pair<uint8_t, std::vector<uint8_t>>> items;
+    items.push_back({1, {static_cast<uint8_t>(target_weight & 0xFF), static_cast<uint8_t>((target_weight >> 8) & 0xFF)}});
+    items.push_back({2, {0x00, 0x00}});
+    items.push_back({3, {feed_type}});
+
+    this->send_frame_(0x22, OPCODE_FEED_CMD, 0x00, items);
+  };
+
   // Interlock bypass: If child lock is active on the coprocessor, temporarily disengage it over UART
   // so remote feeding succeeds seamlessly without requiring physical interaction with the feeder button.
   if (this->child_lock_switch_ != nullptr && this->child_lock_switch_->state) {
     ESP_LOGI(TAG, "Child lock is ON: Temporarily unlocking coprocessor MCU via 0x5140 (00)...");
     this->restore_child_lock_after_feed_ = true;
     this->send_frame_(0x22, OPCODE_CHILD_LOCK, 0x00, {{1, {0x00}}});
-    delay(60);
+    this->set_timeout("feed_dispatch", 60, send_feed_frame);
   } else {
     this->restore_child_lock_after_feed_ = false;
+    send_feed_frame();
   }
-
-  // Exact 3 keys matching stock protocol (pet_feeder_uart_set_food_output / executeGrain):
-  // frame_type: 0x22 (SC95F protocol master request with ACK flag)
-  // Key 1 (2B): Target Weight in Grams (uint16_t LE)
-  // Key 2 (2B): Cutoff limit (0x0000)
-  // Key 3 (1B): Feed Type (0 = remote meal command matching stock executeGrain)
-  ESP_LOGI(TAG, "Sending food output command (0x5590): target=%dg, cutoff=0g, type=%d...",
-           target_weight, feed_type);
-  std::vector<std::pair<uint8_t, std::vector<uint8_t>>> items;
-  items.push_back({1, {static_cast<uint8_t>(target_weight & 0xFF), static_cast<uint8_t>((target_weight >> 8) & 0xFF)}});
-  items.push_back({2, {0x00, 0x00}});
-  items.push_back({3, {feed_type}});
-
-  this->send_frame_(0x22, OPCODE_FEED_CMD, 0x00, items);
 }
 
 void PPFR361SComponent::tare_bowl() {
@@ -924,6 +1043,41 @@ void PPFR361SComponent::reset_desiccant() {
   this->save_schedule_to_nvs_();
   if (this->desiccant_days_sensor_ != nullptr)
     this->desiccant_days_sensor_->publish_state(30.0f);
+}
+
+void PPFR361SComponent::reset_cleaning() {
+  ESP_LOGI(TAG, "Resetting 30-day chute cleaning maintenance timer...");
+  if (this->time_ != nullptr && this->time_->now().is_valid()) {
+    this->storage_.last_cleaning_reset_epoch = this->time_->now().timestamp;
+  } else {
+    this->storage_.last_cleaning_reset_epoch = static_cast<uint32_t>(::time(nullptr));
+  }
+  this->save_schedule_to_nvs_();
+  if (this->cleaning_days_sensor_ != nullptr)
+    this->cleaning_days_sensor_->publish_state(30.0f);
+  if (this->cleaning_due_sensor_ != nullptr)
+    this->cleaning_due_sensor_->publish_state(false);
+}
+
+void PPFR361SComponent::set_manual_feed_sound(bool sound) {
+  this->storage_.manual_feed_sound = sound;
+  this->save_schedule_to_nvs_();
+  if (this->manual_feed_chime_switch_ != nullptr)
+    this->manual_feed_chime_switch_->publish_state(sound);
+}
+
+void PPFR361SComponent::set_scheduled_feed_sound(bool sound) {
+  this->storage_.scheduled_feed_sound = sound;
+  this->save_schedule_to_nvs_();
+  if (this->scheduled_feed_chime_switch_ != nullptr)
+    this->scheduled_feed_chime_switch_->publish_state(sound);
+}
+
+void PPFR361SComponent::set_precision_mode(bool precision) {
+  this->storage_.precision_mode = precision;
+  this->save_schedule_to_nvs_();
+  if (this->precision_mode_switch_ != nullptr)
+    this->precision_mode_switch_->publish_state(precision);
 }
 
 void PPFR361SComponent::start_portion_calibration(uint16_t portions) {
@@ -1041,6 +1195,15 @@ void PPFR361SComponent::load_schedule_from_nvs_() {
   }
   if (this->grams_per_portion_number_ != nullptr) {
     this->grams_per_portion_number_->publish_state(this->storage_.grams_per_portion);
+  }
+  if (this->manual_feed_chime_switch_ != nullptr) {
+    this->manual_feed_chime_switch_->publish_state(this->storage_.manual_feed_sound);
+  }
+  if (this->scheduled_feed_chime_switch_ != nullptr) {
+    this->scheduled_feed_chime_switch_->publish_state(this->storage_.scheduled_feed_sound);
+  }
+  if (this->precision_mode_switch_ != nullptr) {
+    this->precision_mode_switch_->publish_state(this->storage_.precision_mode);
   }
 }
 
@@ -1180,13 +1343,17 @@ void PPFR361SComponent::start_stock_measuring() {
   if (this->status_text_sensor_ != nullptr)
     this->status_text_sensor_->publish_state("Calibrating: Measuring kibble density...");
 
+  auto send_measure_frame = [this]() {
+    // Stock parameters matching startPetSingleMealMeasure: Key 1 = 0x01 (Start measure), Key 5 = 0x00
+    this->send_frame_(0x22, OPCODE_MEASURING, 0x00, {{1, {0x01}}, {5, {0x00}}});
+  };
+
   if (this->child_lock_switch_ != nullptr && this->child_lock_switch_->state) {
     this->send_frame_(0x22, OPCODE_CHILD_LOCK, 0x00, {{1, {0x00}}});
-    delay(50);
+    this->set_timeout("stock_measure_dispatch", 50, send_measure_frame);
+  } else {
+    send_measure_frame();
   }
-
-  // Stock parameters matching startPetSingleMealMeasure: Key 1 = 0x01 (Start measure), Key 5 = 0x00
-  this->send_frame_(0x22, OPCODE_MEASURING, 0x00, {{1, {0x01}}, {5, {0x00}}});
 }
 
 void PPFR361SComponent::clear_plan(uint8_t plan_idx) {
@@ -1341,23 +1508,9 @@ void PPFR361SComponent::load_meal_storage_from_nvs_() {
   if (!pref.load(&this->meal_storage_) || this->meal_storage_.magic != 0x4D45414C) {
     this->meal_storage_ = MealSessionStorage{};
     this->meal_storage_.magic = 0x4D45414C;
-    // Seed with confirmed meal from 2026-10-26 07:31 Bogota time (12:31 UTC)
-    this->meal_storage_.last_meal_epoch = 1793017915;
-    this->meal_storage_.last_meal_consumed_g = 3.0f;
-    this->meal_storage_.last_meal_duration_s = 103;
-    this->meal_storage_.total_eaten_today_g = 3.0f;
-    this->meal_storage_.last_day_of_year = 299;
     this->save_meal_storage_to_nvs_();
   } else {
-    // If last meal recorded in NVS predates today's 3.0g meal at 12:31 UTC, update it
-    if (this->meal_storage_.last_meal_epoch < 1793017915) {
-      this->meal_storage_.last_meal_epoch = 1793017915;
-      this->meal_storage_.last_meal_consumed_g = 3.0f;
-      this->meal_storage_.last_meal_duration_s = 103;
-      this->meal_storage_.total_eaten_today_g = 3.0f;
-      this->meal_storage_.last_day_of_year = 299;
-      this->save_meal_storage_to_nvs_();
-    } else if (this->meal_storage_.total_eaten_today_g == 0.0f && this->meal_storage_.last_meal_consumed_g > 0.0f) {
+    if (this->meal_storage_.total_eaten_today_g == 0.0f && this->meal_storage_.last_meal_consumed_g > 0.0f) {
       this->meal_storage_.total_eaten_today_g = this->meal_storage_.last_meal_consumed_g;
       this->save_meal_storage_to_nvs_();
     }
@@ -1493,8 +1646,25 @@ void PPFR361SComponent::check_eating_settle_timeout_() {
       if (this->time_ != nullptr) {
         this->meal_storage_.last_day_of_year = this->time_->now().day_of_year;
       }
+
+      // Calculate eating speed in grams per minute: (consumed / duration_s) * 60.0
+      float speed_g_per_min = (consumed / static_cast<float>(duration_s)) * 60.0f;
+      this->meal_storage_.last_eating_speed_g_per_min = speed_g_per_min;
+      if (this->eating_speed_sensor_ != nullptr) {
+        this->eating_speed_sensor_->publish_state(speed_g_per_min);
+      }
+
+      // Abnormal eating anomaly check (e.g. rapid gobbling > 45g/min or lethargic < 1.5g/min)
+      if (this->abnormal_eating_sensor_ != nullptr) {
+        bool abnormal = (speed_g_per_min > 45.0f || speed_g_per_min < 1.5f);
+        this->abnormal_eating_sensor_->publish_state(abnormal);
+      }
+
       this->save_meal_storage_to_nvs_();
       this->publish_meal_stats_();
+
+      // Dispatch event callback
+      this->meal_eaten_callback_.call(consumed, duration_s, speed_g_per_min);
     } else {
       ESP_LOGI(TAG, "Consumed weight %.1fg < 2.0g threshold. Discarding noise / sniffing event.", consumed);
     }
@@ -1516,6 +1686,9 @@ void PPFR361SComponent::publish_meal_stats_() {
   }
   if (this->last_meal_duration_sensor_ != nullptr && this->meal_storage_.last_meal_duration_s > 0) {
     this->last_meal_duration_sensor_->publish_state(this->meal_storage_.last_meal_duration_s);
+  }
+  if (this->eating_speed_sensor_ != nullptr && this->meal_storage_.last_eating_speed_g_per_min > 0.0f) {
+    this->eating_speed_sensor_->publish_state(this->meal_storage_.last_eating_speed_g_per_min);
   }
   if (this->total_eaten_today_sensor_ != nullptr) {
     this->total_eaten_today_sensor_->publish_state(this->meal_storage_.total_eaten_today_g);
@@ -1596,6 +1769,27 @@ void PPFR361SComponent::publish_tank_stats_() {
     this->food_in_tank_sensor_->publish_state(current_g);
   if (this->food_tank_level_sensor_ != nullptr)
     this->food_tank_level_sensor_->publish_state(level_pct);
+  if (this->food_empty_sensor_ != nullptr)
+    this->food_empty_sensor_->publish_state(current_g <= 0.0f);
+  if (this->food_tank_category_sensor_ != nullptr) {
+    if (current_g <= 0.0f) {
+      this->food_tank_category_sensor_->publish_state("Empty");
+    } else if (level_pct <= 30.0f) {
+      this->food_tank_category_sensor_->publish_state("Low");
+    } else if (level_pct <= 70.0f) {
+      this->food_tank_category_sensor_->publish_state("Medium");
+    } else {
+      this->food_tank_category_sensor_->publish_state("Full");
+    }
+  }
+  if (this->last_refill_time_sensor_ != nullptr && this->tank_storage_.last_refill_epoch > 0) {
+    ESPTime t = ESPTime::from_epoch_local(this->tank_storage_.last_refill_epoch);
+    if (t.is_valid()) {
+      char rbuf[32];
+      t.strftime(rbuf, sizeof(rbuf), "%Y-%m-%d %H:%M");
+      this->last_refill_time_sensor_->publish_state(rbuf);
+    }
+  }
   if (this->tank_refill_volume_number_ != nullptr)
     this->tank_refill_volume_number_->publish_state(this->tank_storage_.tank_calibration_volume_l);
   if (this->tank_refill_weight_number_ != nullptr)

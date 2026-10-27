@@ -14,13 +14,19 @@ PPFR361SComponent = ppf_r361s_ns.class_("PPFR361SComponent", cg.Component, uart.
 
 CONF_PPF_R361S_ID = "ppf_r361s_id"
 CONF_ON_SCHEDULE_TRIGGER = "on_schedule_trigger"
+CONF_ON_MEAL_EATEN = "on_meal_eaten"
+CONF_ON_FEED_COMPLETED = "on_feed_completed"
+CONF_ON_TANK_LOW = "on_tank_low"
 
 CONFIG_SCHEMA = (
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(PPFR361SComponent),
             cv.Optional(CONF_TIME_ID): cv.use_id(time_.RealTimeClock),
-            cv.Optional(CONF_ON_SCHEDULE_TRIGGER): automation.validate_automation(single=True),
+            cv.Optional(CONF_ON_SCHEDULE_TRIGGER): automation.validate_automation({}),
+            cv.Optional(CONF_ON_MEAL_EATEN): automation.validate_automation({}),
+            cv.Optional(CONF_ON_FEED_COMPLETED): automation.validate_automation({}),
+            cv.Optional(CONF_ON_TANK_LOW): automation.validate_automation({}),
         }
     )
     .extend(uart.UART_DEVICE_SCHEMA)
@@ -35,6 +41,28 @@ FINAL_VALIDATE_SCHEMA = uart.final_validate_device_schema(
     stop_bits=1,
 )
 
+_CALLBACK_AUTOMATIONS = (
+    automation.CallbackAutomation(
+        CONF_ON_SCHEDULE_TRIGGER,
+        "add_on_schedule_trigger_callback",
+    ),
+    automation.CallbackAutomation(
+        CONF_ON_MEAL_EATEN,
+        "add_on_meal_eaten_callback",
+        [(cg.float_, "consumed_g"), (cg.uint32, "duration_s"), (cg.float_, "speed_g_per_min")],
+    ),
+    automation.CallbackAutomation(
+        CONF_ON_FEED_COMPLETED,
+        "add_on_feed_completed_callback",
+        [(cg.uint16, "portions"), (cg.float_, "weight_g")],
+    ),
+    automation.CallbackAutomation(
+        CONF_ON_TANK_LOW,
+        "add_on_tank_low_callback",
+        [(cg.float_, "remaining_g"), (cg.float_, "days_left")],
+    ),
+)
+
 
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
@@ -45,9 +73,7 @@ async def to_code(config):
         time_comp = await cg.get_variable(config[CONF_TIME_ID])
         cg.add(var.set_time(time_comp))
 
-    for conf in config.get(CONF_ON_SCHEDULE_TRIGGER, []):
-        trigger = cg.new_Pvariable(conf[automation.CONF_TRIGGER_ID], var)
-        await automation.build_automation(trigger, [], conf)
+    await automation.build_callback_automations(var, config, _CALLBACK_AUTOMATIONS)
 
 
 # Automation Actions

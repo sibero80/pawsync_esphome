@@ -27,17 +27,20 @@ Convert your factory stock Pawsync feeder over Wi-Fi directly inside Home Assist
   - Connects to your Pawsync or VeSync account to capture device hardware credentials (CID, MAC, tokens).
   - Multi-feeder discovery: adopt one or multiple feeders simultaneously.
   - Automated wireless flashing over your local Wi-Fi network using an embedded, paced HTTP stager.
-- **Official App-Replica Lovelace Feeder Card (v1.2.0)**:
+- **Official App-Replica Lovelace Feeder Card (v1.3.0)**:
   - Bundled automatically—no manual JavaScript resource installation required.
   - **Live Bowl Scale**: Animated stainless steel bowl filling dynamically with kibble, featuring a glowing pulsing indicator when your pet is eating.
   - **Dynamic Calibrated Density**: Portions calculate in real time using your measured grams-per-portion density (e.g. 11.5g).
+  - **Active Safety & Parity Banners**: Real-time warnings for bowl overflow (>150g), chute cleaning due (30-day countdown), hopper level categories (Empty/Low/Sufficient), and low battery failover.
   - **4 Essential Daily Stats**:
     1. *Today's Planned Serving* (calculated sum of all active scheduled meal portions).
-    2. *Last Eaten* (exact grams consumed and human-readable time).
+    2. *Last Eaten* (exact grams consumed, eating speed in g/min, and human-readable time).
     3. *Total Eaten Today* (accumulated consumption with automatic midnight rollover).
     4. *Next Scheduled Meal* (name, target time, and portion breakdown).
   - **Collapsible 7-Plan Schedule Manager**:
     - Manage up to 7 distinct feeding plans with 10 meal slots each.
+- **100% Native Feeder Alert Parity Blueprint**:
+  - Pre-configured Home Assistant notification blueprint ([`blueprints/automation/pawsync_notifications.yaml`](blueprints/automation/pawsync_notifications.yaml)) covering all 14 official mobile app channels: motor jam, bowl overflow, food empty, food low, AC outage, battery low, 30-day chute cleaning reminder, 30-day desiccant replacement, dispense confirmations, meal sessions, scale disconnection, bowl removed, abnormal eating speed, and scale overload.
     - Compact collapsed state by default to conserve dashboard screen real estate.
     - Graphical meal editor with time picker, day pills (Daily, Weekdays, Weekends), and chime toggles.
   - **Quick Manual Feed**: Radial portion selector with instant dispense and one-click bowl scale tare.

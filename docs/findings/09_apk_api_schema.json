@@ -1,0 +1,610 @@
+{
+  "app": {
+    "package": "com.pawsync.pet",
+    "version": "1.1.32",
+    "version_code": 46,
+    "panel_source": "apk",
+    "panel_version": "1.1.32_native",
+    "device_module": "VS_WB_PFM_PPF-R361S-WUS_US",
+    "ble_model_id": 92
+  },
+  "envelope": {
+    "endpoint": "/pet/api/deviceManaged/v1/bypassV2",
+    "method": "POST",
+    "context_fields": [
+      "traceId",
+      "accountID",
+      "token",
+      "userType",
+      "bizType",
+      "countryCode",
+      "language",
+      "timeZone",
+      "appVersion"
+    ],
+    "wrapper": {
+      "data": {
+        "method": "<method_name>",
+        "source": "APP",
+        "data": {
+          "cid": "<device_id>",
+          "configModule": "VS_WB_PFM_PPF-R361S-WUS_US"
+        }
+      }
+    },
+    "device_transport": {
+      "protocol": "TLS 1.2 over TCP",
+      "port": 3883,
+      "remote_host": "34.225.33.72 (ec2-34-225-33-72.compute-1.amazonaws.com)",
+      "pcap_archive": "/root/openwrt/feeder_feed_event.pcap"
+    },
+    "response_format": {
+      "code": 0,
+      "msg": "ok",
+      "result": {}
+    }
+  },
+  "methods": [
+    {
+      "name": "getPetDeviceStatus",
+      "direction": "app->device",
+      "ui": "Feeder Main Screen / Background Polling",
+      "request": [],
+      "response": [
+        {"field": "bowlWeight", "type": "int", "unit": "g", "range": "[-50, 1000]", "description": "Current live weight in food bowl"},
+        {"field": "singleWeight_g", "type": "int", "unit": "g", "range": "[5, 25]", "default": 9, "description": "Calibrated single portion weight"},
+        {"field": "portion", "type": "int", "range": "[1, 20]", "description": "Portion count dispensed in last meal"},
+        {"field": "lastFeedWeight", "type": "int", "unit": "g", "range": "[0, 500]", "description": "Total grams dispensed in last meal"},
+        {"field": "contentInPot", "type": "int", "unit": "%", "range": "[0, 100]", "description": "Food hopper level (0=Empty, 1-30=Low, 31-70=Medium, 71-100=Full)"},
+        {"field": "contentRemainTime", "type": "int", "unit": "days", "range": "[0, 90]", "description": "Estimated remaining days of food in hopper"},
+        {"field": "desiccantRemainTime", "type": "int", "unit": "days", "range": "[0, 30]", "description": "Days remaining before desiccant replacement"},
+        {"field": "powerAdapter", "type": "int", "enum": {"0": "Battery Power", "1": "AC Adapter Connected"}},
+        {"field": "energy", "type": "int", "unit": "%", "range": "[0, 100]", "description": "Battery charge percentage"},
+        {"field": "bowlConnected", "type": "string", "enum": {"normal": "Scale Connected", "bowlConnAbnormal": "Connection Loose", "bowlNotPlaced": "Bowl Missing"}},
+        {"field": "zeroStatus", "type": "int", "enum": {"0": "Normal Calibrated", "1": "Tare Recommended", "2": "Tare Required"}},
+        {"field": "slowFeedMode", "type": "object", "properties": [{"field": "enable", "type": "int", "enum": {"0": "Off", "1": "On"}}]},
+        {"field": "intelligentFeeding", "type": "object", "properties": [{"field": "enable", "type": "int", "enum": {"0": "Off", "1": "On"}}]},
+        {"field": "accurateFeeding", "type": "object", "properties": [{"field": "enable", "type": "int", "enum": {"0": "Off", "1": "On"}}]},
+        {"field": "sleepMode", "type": "object", "properties": [
+          {"field": "enable", "type": "int", "enum": {"0": "Off", "1": "On"}},
+          {"field": "startClkSec", "type": "int", "unit": "sec", "range": "[0, 86399]"},
+          {"field": "endClkSec", "type": "int", "unit": "sec", "range": "[0, 86399]"}
+        ]},
+        {"field": "setVoice", "type": "int", "enum": {"0": "Muted", "1": "Voice Enabled"}}
+      ],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/network/BypassCommonApi.java:90",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "getPetFunction",
+      "direction": "app->device",
+      "ui": "Device Discovery / Capability Init",
+      "request": [],
+      "response": [
+        {"field": "feedingPlan", "type": "object", "properties": [
+          {"field": "maxPlanCount", "type": "int", "default": 7},
+          {"field": "maxMealCountPerPlan", "type": "int", "default": 10},
+          {"field": "maxPortionPerMeal", "type": "int", "default": 20},
+          {"field": "supportCorrection", "type": "int", "default": 1}
+        ]},
+        {"field": "voice", "type": "object", "properties": [
+          {"field": "duration", "type": "int", "default": 10},
+          {"field": "sampleRate", "type": "int", "default": 8000},
+          {"field": "sampleBit", "type": "int", "default": 16},
+          {"field": "fileType", "type": "array", "default": ["pcm"]},
+          {"field": "supportVolume", "type": "int", "default": 1}
+        ]},
+        {"field": "deviceCalibration", "type": "object", "properties": [
+          {"field": "support", "type": "int", "default": 1},
+          {"field": "mealMeasureTimeout", "type": "int", "default": 60}
+        ]},
+        {"field": "contentManagement", "type": "object", "properties": [
+          {"field": "support", "type": "int", "default": 1},
+          {"field": "potVolume_ml", "type": "int", "default": 4000}
+        ]},
+        {"field": "desiccant", "type": "object", "properties": [
+          {"field": "support", "type": "int", "default": 1},
+          {"field": "maxResetTime", "type": "int", "default": 30}
+        ]}
+      ],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/network/BypassCommonApi.java:96",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "manualFeeding",
+      "direction": "app->device",
+      "ui": "Feeder Main Screen > Feed Button > Manual Feeding Dialog",
+      "request": [
+        {"field": "serving1", "type": "int", "unit": "g", "range": "[5, 500]", "description": "Target food weight in grams to dispense (portions * singleWeight_g)"},
+        {"field": "serving2", "type": "null", "description": "Reserved for dual-hopper models; null on PPF-R361S"}
+      ],
+      "response": [],
+      "errors": [{"code": 0, "meaning": "Dispense initiated"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:188",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "setFeedingBowlToZero",
+      "direction": "app->device",
+      "ui": "Feeder Main Screen > Zero Out Button / Scale Calibration",
+      "request": [],
+      "response": [
+        {"field": "failureType", "type": "string", "enum": {"weightFluctuation": "Weight unstable", "bowlConnAbnormal": "Tray disconnected", "bowlNotPlaced": "Bowl missing"}}
+      ],
+      "errors": [{"code": 0, "meaning": "Zero tare successful"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:206",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "startPetSingleMealMeasure",
+      "direction": "app->device",
+      "ui": "Device Settings > Portion Calibration > Start",
+      "request": [],
+      "response": [],
+      "errors": [{"code": 0, "meaning": "Test dispensing routine started (5 portions)"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:230",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "getPetSingleMealMeasure",
+      "direction": "app->device",
+      "ui": "Device Settings > Portion Calibration > Status Poll",
+      "request": [],
+      "response": [
+        {"field": "portion", "type": "int", "description": "Portion count dispensed in test (5)"},
+        {"field": "single_weight_g", "type": "int", "unit": "g", "description": "Calculated portion unit weight"},
+        {"field": "state", "type": "int", "enum": {"1": "Measuring / Dispensing", "2": "Completed", "3": "Failed"}},
+        {"field": "type", "type": "string", "enum": {"normal": "Success", "jamFood": "Motor Jammed", "overLoad": "Scale Overloaded", "blockFood": "Bowl Full", "scantyFood": "Tank Low", "bowlConnAbnormal": "Scale Disconnected", "bowlNotPlaced": "Bowl Missing"}}
+      ],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:164",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "savePetSingleMealMeasure",
+      "direction": "app->device",
+      "ui": "Device Settings > Portion Calibration > Save",
+      "request": [
+        {"field": "portion", "type": "int", "default": 5},
+        {"field": "single_weight_g", "type": "int", "unit": "g", "range": "[5, 25]"}
+      ],
+      "response": [],
+      "errors": [{"code": 0, "meaning": "Portion weight calibrated and saved"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:200",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "getFeedingPlanList",
+      "direction": "app->device",
+      "ui": "Feeding Plan Screen > List Plans",
+      "request": [
+        {"field": "index", "type": "int", "default": 0}
+      ],
+      "response": [
+        {"field": "total", "type": "int"},
+        {"field": "planList", "type": "array", "items": [
+          {"field": "planId", "type": "int"},
+          {"field": "planName", "type": "string"},
+          {"field": "enable", "type": "int", "enum": {"0": "Disabled", "1": "Enabled"}},
+          {"field": "repeat", "type": "int", "unit": "bitmask", "range": "[0, 254]"},
+          {"field": "dailyTotalWeightG", "type": "int", "unit": "g"}
+        ]}
+      ],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:140",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "getFeedingPlanDetail",
+      "direction": "app->device",
+      "ui": "Feeding Plan Screen > Plan Detail",
+      "request": [
+        {"field": "planId", "type": "int"}
+      ],
+      "response": [
+        {"field": "planId", "type": "int"},
+        {"field": "planName", "type": "string"},
+        {"field": "enable", "type": "int", "enum": {"0": "Disabled", "1": "Enabled"}},
+        {"field": "repeat", "type": "int", "unit": "bitmask"},
+        {"field": "scheduleList", "type": "array", "items": [
+          {"field": "timeSec", "type": "int", "unit": "sec", "range": "[0, 86399]", "description": "Seconds from local midnight (hour*3600 + minute*60)"},
+          {"field": "weight", "type": "int", "unit": "g", "range": "[5, 500]", "description": "Target weight for this meal"}
+        ]}
+      ],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:182",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "createFeedingPlan",
+      "direction": "app->device",
+      "ui": "Feeding Plan Screen > Add Plan > Save",
+      "request": [
+        {"field": "planName", "type": "string"},
+        {"field": "repeat", "type": "int", "unit": "bitmask", "bits": {"1": "Mon", "2": "Tue", "3": "Wed", "4": "Thu", "5": "Fri", "6": "Sat", "7": "Sun"}},
+        {"field": "scheduleList", "type": "array", "items": [
+          {"field": "timeSec", "type": "int", "unit": "sec"},
+          {"field": "weight", "type": "int", "unit": "g"}
+        ]}
+      ],
+      "response": [
+        {"field": "planId", "type": "int"}
+      ],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:128",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "updateFeedingPlan",
+      "direction": "app->device",
+      "ui": "Feeding Plan Screen > Edit Plan > Save",
+      "request": [
+        {"field": "planId", "type": "int"},
+        {"field": "planName", "type": "string"},
+        {"field": "repeat", "type": "int", "unit": "bitmask"},
+        {"field": "scheduleList", "type": "array", "items": [
+          {"field": "timeSec", "type": "int", "unit": "sec"},
+          {"field": "weight", "type": "int", "unit": "g"}
+        ]}
+      ],
+      "response": [],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:236",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "updateFeedingPlanStatus",
+      "direction": "app->device",
+      "ui": "Feeding Plan Screen > Plan Toggle Switch",
+      "request": [
+        {"field": "planId", "type": "int"},
+        {"field": "enable", "type": "int", "enum": {"0": "Disabled", "1": "Enabled"}}
+      ],
+      "response": [],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:248",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "updateFeedingPlanBatch",
+      "direction": "app->device",
+      "ui": "Feeding Plan Screen > Batch Update",
+      "request": [
+        {"field": "feedingPlanList", "type": "array", "items": [
+          {"field": "planId", "type": "int"},
+          {"field": "planName", "type": "string"},
+          {"field": "repeat", "type": "int"},
+          {"field": "schedule", "type": "array"}
+        ]}
+      ],
+      "response": [],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:242",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "deleteFeedingPlan",
+      "direction": "app->device",
+      "ui": "Feeding Plan Screen > Delete Plan",
+      "request": [
+        {"field": "planId", "type": "int"}
+      ],
+      "response": [],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:134",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "getNextScheduleForToday",
+      "direction": "app->device",
+      "ui": "Feeder Main Screen > Next Meal Banner",
+      "request": [],
+      "response": [
+        {"field": "state", "type": "int", "enum": {"0": "Have next meal scheduled", "1": "No more meals scheduled today", "2": "No active feeding plan"}},
+        {"field": "planDetail", "type": "object", "properties": [
+          {"field": "planId", "type": "int"},
+          {"field": "timeSec", "type": "int", "unit": "sec"},
+          {"field": "weight", "type": "int", "unit": "g"}
+        ]}
+      ],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:146",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "setPetSlowFeedMode",
+      "direction": "app->device",
+      "ui": "Device Settings > Slow Feeding Switch",
+      "request": [
+        {"field": "enable", "type": "int", "enum": {"0": "Disabled", "1": "Enabled"}}
+      ],
+      "response": [],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:224",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "setIntelligentFeedingMode",
+      "direction": "app->device",
+      "ui": "Device Settings > Smart Feeding Switch",
+      "request": [
+        {"field": "enable", "type": "int", "enum": {"0": "Disabled", "1": "Enabled"}}
+      ],
+      "response": [],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:218",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "setIAccurateFeedingMode",
+      "direction": "app->device",
+      "ui": "Device Settings > Precision Mode Switch",
+      "request": [
+        {"field": "enable", "type": "int", "enum": {"0": "Disabled", "1": "Enabled"}}
+      ],
+      "response": [],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:212",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "setPetSleepMode",
+      "direction": "app->device",
+      "ui": "Device Settings > Sleep Mode (DND)",
+      "request": [
+        {"field": "enable", "type": "int", "enum": {"0": "Disabled", "1": "Enabled"}},
+        {"field": "startClkSec", "type": "int", "unit": "sec", "range": "[0, 86399]", "default": 72000},
+        {"field": "endClkSec", "type": "int", "unit": "sec", "range": "[0, 86399]", "default": 21600}
+      ],
+      "response": [],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/network/BypassCommonApi.java:120",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "getPetDesiccantInfo",
+      "direction": "app->device",
+      "ui": "Desiccant Screen > Status",
+      "request": [],
+      "response": [
+        {"field": "remainTime", "type": "int", "unit": "days", "range": "[0, 30]"}
+      ],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:158",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "updatePetDesiccantInfo",
+      "direction": "app->device",
+      "ui": "Desiccant Screen > Reset Desiccant Button",
+      "request": [
+        {"field": "remainTime", "type": "int", "unit": "days", "default": 30}
+      ],
+      "response": [],
+      "errors": [{"code": 0, "meaning": "Desiccant timer reset"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:266",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "getPetCurrentContentSize",
+      "direction": "app->device",
+      "ui": "Food Management Screen",
+      "request": [],
+      "response": [
+        {"field": "contentInPot", "type": "int", "unit": "%"},
+        {"field": "daysRemain", "type": "int", "unit": "days"},
+        {"field": "volume_ml", "type": "float", "unit": "ml"}
+      ],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:152",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "updatePetContentSize",
+      "direction": "app->device",
+      "ui": "Food Management Screen > Update Capacity",
+      "request": [
+        {"field": "volume_ml", "type": "float", "unit": "ml"},
+        {"field": "type", "type": "int"}
+      ],
+      "response": [
+        {"field": "contentInPot", "type": "int"},
+        {"field": "daysRemain", "type": "int"},
+        {"field": "volume_ml", "type": "float"}
+      ],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:260",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "getPetVoiceSetting",
+      "direction": "app->device",
+      "ui": "Voice Settings Screen",
+      "request": [],
+      "response": [
+        {"field": "voiceUrl", "type": "string"},
+        {"field": "duration", "type": "int", "unit": "sec", "range": "[1, 10]"},
+        {"field": "volume", "type": "int", "unit": "%", "range": "[0, 100]"},
+        {"field": "manualVoice", "type": "int", "enum": {"0": "Disabled", "1": "Enabled"}},
+        {"field": "scheduleVoice", "type": "int", "enum": {"0": "Disabled", "1": "Enabled"}},
+        {"field": "sampleRate", "type": "int", "unit": "Hz", "enum": [8000, 16000]}
+      ],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:176",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "updatePetVoiceSetting",
+      "direction": "app->device",
+      "ui": "Voice Settings Screen > Save / Change Volume",
+      "request": [
+        {"field": "voiceUrl", "type": "string"},
+        {"field": "duration", "type": "int", "unit": "sec"},
+        {"field": "volume", "type": "int", "unit": "%", "range": "[0, 100]"},
+        {"field": "manualVoice", "type": "int", "enum": {"0": "Disabled", "1": "Enabled"}},
+        {"field": "scheduleVoice", "type": "int", "enum": {"0": "Disabled", "1": "Enabled"}},
+        {"field": "sampleRate", "type": "int", "unit": "Hz"}
+      ],
+      "response": [],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:272",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "getPetVoiceProcess",
+      "direction": "app->device",
+      "ui": "Voice Settings Screen > Audio Download Progress Poll",
+      "request": [],
+      "response": [
+        {"field": "process", "type": "int", "unit": "%", "range": "[0, 100]"},
+        {"field": "state", "type": "int", "enum": {"0": "Idle", "1": "Downloading", "2": "Success", "3": "Failed"}}
+      ],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:170",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "playPetVoice",
+      "direction": "app->device",
+      "ui": "Voice Settings Screen > Test Voice Button",
+      "request": [],
+      "response": [],
+      "errors": [{"code": 0, "meaning": "Chime playback initiated"}],
+      "evidence": "com/pawsync/pet/device/network/BypassFeederApi.java:194",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "getPetDeviceAlertList",
+      "direction": "app->device",
+      "ui": "Feeder Main Screen > Active Alert Banner",
+      "request": [],
+      "response": [
+        {"field": "list", "type": "array", "items": [
+          {"field": "type", "type": "string", "enum": ["scantyFood", "lackFood", "jamFood", "blockFood", "cleanFoodpassages", "lowBattery", "replaceDesiccant", "outage", "bowlConnAbnormal", "bowlNotPlaced", "overLoad"]},
+          {"field": "timeStamp", "type": "long", "unit": "ms"}
+        ]}
+      ],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/network/BypassCommonApi.java:84",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "resetPetAlert",
+      "direction": "app->device",
+      "ui": "Alert Screen > Dismiss / Clear Alert",
+      "request": [
+        {"field": "type", "type": "string"}
+      ],
+      "response": [],
+      "errors": [{"code": 0, "meaning": "Alert dismissed"}],
+      "evidence": "com/pawsync/pet/device/network/BypassCommonApi.java:114",
+      "confidence": "CONFIRMED"
+    },
+    {
+      "name": "getPetLogList",
+      "direction": "app->cloud",
+      "ui": "Activity Log / Feeder History Screen",
+      "request": [
+        {"field": "deviceId", "type": "string"},
+        {"field": "startTimestamp", "type": "long", "unit": "ms"},
+        {"field": "endTimestamp", "type": "long", "unit": "ms"},
+        {"field": "pageSize", "type": "int", "default": 20},
+        {"field": "logType", "type": "string"},
+        {"field": "objectType", "type": "int"},
+        {"field": "petId", "type": "int"},
+        {"field": "logMaxId", "type": "int"}
+      ],
+      "response": [
+        {"field": "petLogList", "type": "array", "items": [
+          {"field": "logId", "type": "int"},
+          {"field": "timestamp", "type": "long", "unit": "ms"},
+          {"field": "logType", "type": "string"},
+          {"field": "value", "type": "int", "unit": "g"},
+          {"field": "durationInS", "type": "int", "unit": "sec"},
+          {"field": "text", "type": "string"}
+        ]}
+      ],
+      "errors": [{"code": 0, "meaning": "Success"}],
+      "evidence": "com/pawsync/pet/device/net/HomeCloudApi.java:19",
+      "confidence": "CONFIRMED"
+    }
+  ],
+  "error_codes": [
+    {"code": "scantyFood", "meaning": "Feeder tank is low on food", "ui_text": "Feeder tank is low. Time for a refill!"},
+    {"code": "lackFood", "meaning": "Feeder tank is completely empty", "ui_text": "Feeder tank is empty. Time for a refill!"},
+    {"code": "jamFood", "meaning": "Motor stall or mechanical blockage in food chute", "ui_text": "Please clear blockage in food distributor."},
+    {"code": "blockFood", "meaning": "Bowl weight exceeds 150g overflow limit", "ui_text": "There is too much food left in the bowl. Please remove it to prevent blocking the food outlet."},
+    {"code": "cleanFoodpassages", "meaning": "Monthly cleaning reminder interval reached", "ui_text": "Time to clean the pet feeder!"},
+    {"code": "lowBattery", "meaning": "D-cell battery backup voltage is critically low", "ui_text": "Time to replace the batteries!"},
+    {"code": "replaceDesiccant", "meaning": "Silica gel packet 30-day timer expired", "ui_text": "Time to replace the silica gel!"},
+    {"code": "outage", "meaning": "Main AC adapter disconnected, operating on battery backup", "ui_text": "The adapter is disconnected and on battery power. Please reconnect as soon as possible."},
+    {"code": "bowlConnAbnormal", "meaning": "Weighing scale platform pogo pins not making contact", "ui_text": "Please make sure the weighing tray is securely connected to the feeder base."},
+    {"code": "bowlNotPlaced", "meaning": "Stainless steel food bowl missing from scale tray", "ui_text": "No food bowl detected."},
+    {"code": "overLoad", "meaning": "Weighing scale load exceeds maximum rating", "ui_text": "Weighing over the limit, please check the bowl and try again."},
+    {"code": "weightFluctuation", "meaning": "Scale tare failure due to weight instability or vibration", "ui_text": "Weight is unstable Please Check and keep your scale stable and clean"}
+  ],
+  "settings_inventory": [
+    {"screen": "Main Feeder Screen", "control": "sensor", "label": "Bowl Weight", "method": "getPetDeviceStatus", "field": "bowlWeight", "range": "-50..1000 g", "ha_platform": "sensor", "ha_device_class": "weight"},
+    {"screen": "Main Feeder Screen", "control": "sensor", "label": "Food Hopper Level", "method": "getPetDeviceStatus", "field": "contentInPot", "range": "0..100 % (Empty, Low, Medium, Full)", "ha_platform": "sensor"},
+    {"screen": "Main Feeder Screen", "control": "sensor", "label": "Food Remaining Days", "method": "getPetDeviceStatus", "field": "contentRemainTime", "range": "0..90 days", "ha_platform": "sensor"},
+    {"screen": "Main Feeder Screen", "control": "binary_sensor", "label": "Scale Tray Connected", "method": "getPetDeviceStatus", "field": "bowlConnected", "range": "normal vs bowlConnAbnormal/bowlNotPlaced", "ha_platform": "binary_sensor"},
+    {"screen": "Main Feeder Screen", "control": "button", "label": "Zero Out (Tare Scale)", "method": "setFeedingBowlToZero", "field": null, "range": "Trigger", "ha_platform": "button"},
+    {"screen": "Main Feeder Screen", "control": "number + button", "label": "Manual Feed", "method": "manualFeeding", "field": "serving1", "range": "1..20 portions (or 5..200g)", "ha_platform": "number + button"},
+    {"screen": "Main Feeder Screen", "control": "binary_sensor", "label": "Power Connected", "method": "getPetDeviceStatus", "field": "powerAdapter", "range": "0 (Battery) vs 1 (Adapter)", "ha_platform": "binary_sensor", "ha_device_class": "plug"},
+    {"screen": "Main Feeder Screen", "control": "sensor", "label": "Battery Percentage", "method": "getPetDeviceStatus", "field": "energy", "range": "0..100 %", "ha_platform": "sensor", "ha_device_class": "battery"},
+    {"screen": "Main Feeder Screen", "control": "sensor", "label": "Last Meal Weight", "method": "getPetDeviceStatus", "field": "lastFeedWeight", "range": "0..500 g", "ha_platform": "sensor", "ha_device_class": "weight"},
+    {"screen": "Feeding Plan Screen", "control": "switch", "label": "Feeding Plan Enabled", "method": "updateFeedingPlanStatus", "field": "enable", "range": "0 / 1", "ha_platform": "switch"},
+    {"screen": "Device Settings", "control": "switch", "label": "Slow Feeding", "method": "setPetSlowFeedMode", "field": "enable", "range": "0 / 1", "ha_platform": "switch"},
+    {"screen": "Device Settings", "control": "switch", "label": "Smart Feeding", "method": "setIntelligentFeedingMode", "field": "enable", "range": "0 / 1", "ha_platform": "switch"},
+    {"screen": "Device Settings", "control": "switch", "label": "Precision Mode", "method": "setIAccurateFeedingMode", "field": "enable", "range": "0 / 1", "ha_platform": "switch"},
+    {"screen": "Device Settings", "control": "switch", "label": "Sleep Mode (DND)", "method": "setPetSleepMode", "field": "enable", "range": "0 / 1", "ha_platform": "switch"},
+    {"screen": "Device Settings", "control": "time", "label": "Sleep Mode Start Time", "method": "setPetSleepMode", "field": "startClkSec", "range": "0..86399 sec (default 72000 = 20:00)", "ha_platform": "time"},
+    {"screen": "Device Settings", "control": "time", "label": "Sleep Mode End Time", "method": "setPetSleepMode", "field": "endClkSec", "range": "0..86399 sec (default 21600 = 06:00)", "ha_platform": "time"},
+    {"screen": "Voice Settings", "control": "number", "label": "Speaker Volume", "method": "updatePetVoiceSetting", "field": "volume", "range": "0..100 %", "ha_platform": "number"},
+    {"screen": "Voice Settings", "control": "switch", "label": "Manual Feed Chime", "method": "updatePetVoiceSetting", "field": "manualVoice", "range": "0 / 1", "ha_platform": "switch"},
+    {"screen": "Voice Settings", "control": "switch", "label": "Schedule Feed Chime", "method": "updatePetVoiceSetting", "field": "scheduleVoice", "range": "0 / 1", "ha_platform": "switch"},
+    {"screen": "Voice Settings", "control": "button", "label": "Play Meal Call", "method": "playPetVoice", "field": null, "range": "Trigger", "ha_platform": "button"},
+    {"screen": "Desiccant Screen", "control": "sensor", "label": "Desiccant Remaining Days", "method": "getPetDesiccantInfo", "field": "remainTime", "range": "0..30 days", "ha_platform": "sensor"},
+    {"screen": "Desiccant Screen", "control": "button", "label": "Reset Desiccant Timer", "method": "updatePetDesiccantInfo", "field": "remainTime: 30", "range": "Trigger", "ha_platform": "button"},
+    {"screen": "Device Hardware", "control": "binary_sensor", "label": "Child Lock", "method": "local_hardware_timer", "field": "mcu_lock_state", "range": "Locked after 5m idle / hold FEED 3s", "ha_platform": "binary_sensor", "ha_device_class": "lock"}
+  ],
+  "conversions": [
+    {
+      "name": "food_weight_grams_to_ounces",
+      "formula": "weight_oz = weight_g * 0.035274f (formatted '%.1f')",
+      "inverse_formula": "weight_g = round(weight_oz / 0.035274f)",
+      "evidence": "o6/e.java:76"
+    },
+    {
+      "name": "pet_body_weight_grams_to_pounds",
+      "formula": "weight_lb = weight_g * 0.002205f (formatted '%.1f')",
+      "inverse_formula": "weight_g = round(weight_lb / 0.002205000026151538d)",
+      "evidence": "o6/e.java:60"
+    },
+    {
+      "name": "water_volume_ml_to_fluid_ounces",
+      "formula": "volume_fl_oz = volume_ml * 0.033814d (formatted '%.1f')",
+      "inverse_formula": "volume_ml = volume_fl_oz / 0.033814d",
+      "evidence": "o6/e.java:160"
+    },
+    {
+      "name": "schedule_time_seconds_from_midnight",
+      "formula": "timeSec = hour * 3600 + minute * 60 + second",
+      "inverse_formula": "hour = timeSec / 3600, minute = (timeSec % 3600) / 60, second = timeSec % 60",
+      "evidence": "Schedule.java:8"
+    },
+    {
+      "name": "weekday_repeat_bitmask",
+      "formula": "repeat = (Sun?128:0) | (Sat?64:0) | (Fri?32:0) | (Thu?16:0) | (Wed?8:0) | (Tue?4:0) | (Mon?2:0)",
+      "evidence": "AddOrEditFeedingPlanActivity.java"
+    },
+    {
+      "name": "excess_food_bowl_threshold",
+      "constant": 150,
+      "unit": "g",
+      "evidence": "FeederAlertType.java (blockFood threshold)"
+    }
+  ]
+}
