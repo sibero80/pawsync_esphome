@@ -23,6 +23,9 @@ CONF_DESICCANT_DAYS = "desiccant_days"
 CONF_LAST_MEAL_CONSUMED = "last_meal_consumed"
 CONF_LAST_MEAL_DURATION = "last_meal_duration"
 CONF_TOTAL_EATEN_TODAY = "total_eaten_today"
+CONF_FOOD_IN_TANK = "food_in_tank"
+CONF_FOOD_TANK_LEVEL = "food_tank_level"
+CONF_DAYS_TO_EMPTY_TANK = "days_to_empty_tank"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -82,6 +85,26 @@ CONFIG_SCHEMA = cv.Schema(
             device_class=DEVICE_CLASS_WEIGHT,
             state_class=STATE_CLASS_TOTAL_INCREASING,
         ),
+        cv.Optional(CONF_FOOD_IN_TANK): sensor.sensor_schema(
+            unit_of_measurement="g",
+            icon="mdi:weight-gram",
+            accuracy_decimals=0,
+            device_class=DEVICE_CLASS_WEIGHT,
+            state_class=STATE_CLASS_MEASUREMENT,
+        ),
+        cv.Optional(CONF_FOOD_TANK_LEVEL): sensor.sensor_schema(
+            unit_of_measurement=UNIT_PERCENT,
+            icon="mdi:gauge",
+            accuracy_decimals=0,
+            state_class=STATE_CLASS_MEASUREMENT,
+        ),
+        cv.Optional(CONF_DAYS_TO_EMPTY_TANK): sensor.sensor_schema(
+            unit_of_measurement="d",
+            icon="mdi:calendar-clock",
+            accuracy_decimals=1,
+            device_class=DEVICE_CLASS_DURATION,
+            state_class=STATE_CLASS_MEASUREMENT,
+        ),
     }
 )
 
@@ -112,3 +135,12 @@ async def to_code(config):
     if total_eaten_today_config := config.get(CONF_TOTAL_EATEN_TODAY):
         sens = await sensor.new_sensor(total_eaten_today_config)
         cg.add(hub.set_total_eaten_today_sensor(sens))
+    if food_in_tank_config := config.get(CONF_FOOD_IN_TANK):
+        sens = await sensor.new_sensor(food_in_tank_config)
+        cg.add(hub.set_food_in_tank_sensor(sens))
+    if food_tank_level_config := config.get(CONF_FOOD_TANK_LEVEL):
+        sens = await sensor.new_sensor(food_tank_level_config)
+        cg.add(hub.set_food_tank_level_sensor(sens))
+    if days_to_empty_tank_config := config.get(CONF_DAYS_TO_EMPTY_TANK):
+        sens = await sensor.new_sensor(days_to_empty_tank_config)
+        cg.add(hub.set_days_to_empty_tank_sensor(sens))

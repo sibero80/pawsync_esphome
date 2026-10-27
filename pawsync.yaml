@@ -203,6 +203,9 @@ switch:
     stock_calibration:
       name: "Stock Calibration Mode (6-Portion Cycle)"
       icon: "mdi:rotate-right"
+    tank_projection_mode:
+      name: "Tank Projection: Rolling Average Mode"
+      icon: "mdi:chart-timeline-variant"
   - platform: template
     name: "Unlock Factory Firmware Rollback"
     id: sw_unlock_factory_rollback
@@ -237,6 +240,12 @@ sensor:
       name: "Last Meal Duration"
     total_eaten_today:
       name: "Total Eaten Today"
+    food_in_tank:
+      name: "Food in Tank"
+    food_tank_level:
+      name: "Food Tank Level"
+    days_to_empty_tank:
+      name: "Days to Empty Tank"
 
 binary_sensor:
   - platform: ppf_r361s
@@ -263,6 +272,10 @@ text_sensor:
       name: "Today's Schedule Summary"
     last_meal_time:
       name: "Last Meal Time"
+    last_adjusted_meal:
+      name: "Last Adjusted Meal"
+    last_adjusted_meal_notes:
+      name: "Last Adjusted Meal Notes"
 
 button:
   - platform: ppf_r361s
@@ -276,6 +289,8 @@ button:
       name: "Calibrate Kibble Density (Empty Bowl First)"
     reset_desiccant:
       name: "Reset Desiccant (30 Days)"
+    reset_tank_food:
+      name: "Reset Tank Food (Refill)"
   - platform: template
     name: "Feed Selected Portions"
     id: btn_feed_manual_portions
@@ -301,6 +316,10 @@ number:
   - platform: ppf_r361s
     feed_portions:
       name: "Manual Feed Portions"
+    tank_refill_volume:
+      name: "Tank Refill Volume"
+    tank_refill_weight:
+      name: "Tank Refill Weight (Optional)"
   - platform: template
     name: "Grams per Portion (Kibble Calibration)"
     id: kibble_grams_per_portion

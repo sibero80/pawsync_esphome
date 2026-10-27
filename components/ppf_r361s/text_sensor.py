@@ -10,6 +10,8 @@ CONF_STATUS = "status"
 CONF_NEXT_MEAL = "next_meal"
 CONF_SCHEDULE_SUMMARY = "schedule_summary"
 CONF_LAST_MEAL_TIME = "last_meal_time"
+CONF_LAST_ADJUSTED_MEAL = "last_adjusted_meal"
+CONF_LAST_ADJUSTED_MEAL_NOTES = "last_adjusted_meal_notes"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -25,6 +27,12 @@ CONFIG_SCHEMA = cv.Schema(
         ),
         cv.Optional(CONF_LAST_MEAL_TIME): text_sensor.text_sensor_schema(
             icon="mdi:clock-check-outline",
+        ),
+        cv.Optional(CONF_LAST_ADJUSTED_MEAL): text_sensor.text_sensor_schema(
+            icon="mdi:clock-alert-outline",
+        ),
+        cv.Optional(CONF_LAST_ADJUSTED_MEAL_NOTES): text_sensor.text_sensor_schema(
+            icon="mdi:note-text-outline",
         ),
     }
 )
@@ -44,3 +52,9 @@ async def to_code(config):
     if last_meal_time_config := config.get(CONF_LAST_MEAL_TIME):
         sens = await text_sensor.new_text_sensor(last_meal_time_config)
         cg.add(hub.set_last_meal_time_sensor(sens))
+    if last_adj_config := config.get(CONF_LAST_ADJUSTED_MEAL):
+        sens = await text_sensor.new_text_sensor(last_adj_config)
+        cg.add(hub.set_last_adjusted_meal_sensor(sens))
+    if last_adj_notes_config := config.get(CONF_LAST_ADJUSTED_MEAL_NOTES):
+        sens = await text_sensor.new_text_sensor(last_adj_notes_config)
+        cg.add(hub.set_last_adjusted_meal_notes_sensor(sens))

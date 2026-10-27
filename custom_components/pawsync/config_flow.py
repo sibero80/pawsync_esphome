@@ -22,6 +22,7 @@ from .const import (
     CONF_SSID,
     CONF_TIME_ZONE,
     CONF_TOKEN,
+    CONF_UNIT_SYSTEM,
     CONF_WIFI_PASSWORD,
     DEFAULT_COUNTRY_CODE,
     DEFAULT_NOISE_PSK,
@@ -32,6 +33,8 @@ from .const import (
     FLASH_METHOD_WEBSERIAL,
     MODE_CLOUD_ONBOARDING,
     MODE_DIRECT_ESPHOME,
+    UNIT_SYSTEM_IMPERIAL,
+    UNIT_SYSTEM_METRIC,
 )
 from .esphome_provisioner import (
     async_auto_adopt_esphome,
@@ -66,6 +69,7 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._wifi_ssid: str = ""
         self._wifi_password: str = ""
         self._flash_method: str = FLASH_METHOD_OTA
+        self._unit_system: str = UNIT_SYSTEM_METRIC
         self._ota_stager: PawsyncOtaStager | None = None
 
     async def async_step_user(
@@ -224,15 +228,25 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Step 4: Verify prerequisites and collect Wi-Fi settings."""
         errors: dict[str, str] = {}
 
+        is_metric = getattr(self.hass.config.units, "is_metric", True) if hasattr(self.hass.config, "units") else True
+        default_unit = UNIT_SYSTEM_METRIC if is_metric else UNIT_SYSTEM_IMPERIAL
+
         if user_input is not None:
             self._wifi_ssid = user_input.get(CONF_SSID, "")
             self._wifi_password = user_input.get(CONF_WIFI_PASSWORD, "")
+            self._unit_system = user_input.get(CONF_UNIT_SYSTEM, default_unit)
             return await self.async_step_flash_wizard()
 
         data_schema = vol.Schema(
             {
                 vol.Optional(CONF_SSID, default=self._wifi_ssid): str,
                 vol.Optional(CONF_WIFI_PASSWORD, default=""): str,
+                vol.Required(CONF_UNIT_SYSTEM, default=default_unit): vol.In(
+                    {
+                        UNIT_SYSTEM_METRIC: "Metric (Grams, Liters)",
+                        UNIT_SYSTEM_IMPERIAL: "Imperial (Ounces, Cups)",
+                    }
+                ),
                 vol.Optional("confirm_prerequisites", default=True): bool,
             }
         )
@@ -330,6 +344,7 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_FLASH_METHOD: self._flash_method,
                 CONF_SSID: self._wifi_ssid,
                 CONF_HOST: local_ip,
+                CONF_UNIT_SYSTEM: self._unit_system,
             }
 
             return self.async_create_entry(
@@ -368,9 +383,13 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Direct connection for an existing flashed ESPHome feeder."""
         errors: dict[str, str] = {}
 
+        is_metric = getattr(self.hass.config.units, "is_metric", True) if hasattr(self.hass.config, "units") else True
+        default_unit = UNIT_SYSTEM_METRIC if is_metric else UNIT_SYSTEM_IMPERIAL
+
         if user_input is not None:
             name = user_input.get("name", "Pawsync Feeder").strip()
             host = user_input[CONF_HOST].strip()
+            unit_system = user_input.get(CONF_UNIT_SYSTEM, default_unit)
 
             self.hass.async_create_task(
                 async_auto_adopt_esphome(
@@ -386,6 +405,7 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data={
                     CONF_ONBOARDING_MODE: MODE_DIRECT_ESPHOME,
                     CONF_HOST: host,
+                    CONF_UNIT_SYSTEM: unit_system,
                     "name": name,
                 },
                 description_placeholders={
@@ -399,6 +419,12 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             {
                 vol.Required("name", default="Pawsync Feeder"): str,
                 vol.Required(CONF_HOST): str,
+                vol.Required(CONF_UNIT_SYSTEM, default=default_unit): vol.In(
+                    {
+                        UNIT_SYSTEM_METRIC: "Metric (Grams, Liters)",
+                        UNIT_SYSTEM_IMPERIAL: "Imperial (Ounces, Cups)",
+                    }
+                ),
             }
         )
 
@@ -406,4 +432,49 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="direct_esphome",
             data_schema=data_schema,
             errors=errors,
+        )
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
+        """Get the options flow for this handler."""
+        return PawsyncOptionsFlowHandler(config_entry)
+
+
+class PawsyncOptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle options flow for Pawsync Feeder integration."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Manage the options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        is_metric = getattr(self.hass.config.units, "is_metric", True) if hasattr(self.hass.config, "units") else True
+        default_unit = self.config_entry.options.get(
+            CONF_UNIT_SYSTEM,
+            self.config_entry.data.get(CONF_UNIT_SYSTEM, UNIT_SYSTEM_METRIC if is_metric else UNIT_SYSTEM_IMPERIAL),
+        )
+
+        data_schema = vol.Schema(
+            {
+                vol.Required(CONF_UNIT_SYSTEM, default=default_unit): vol.In(
+                    {
+                        UNIT_SYSTEM_METRIC: "Metric (Grams, Liters)",
+                        UNIT_SYSTEM_IMPERIAL: "Imperial (Ounces, Cups)",
+                    }
+                ),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=data_schema,
         )

@@ -16,7 +16,7 @@
  * - Visual Card Editor for Lovelace UI
  */
 
-const CARD_VERSION = "1.2.3";
+const CARD_VERSION = "1.3.0";
 
 console.info(
   `%c PAWSYNC-FEEDER-CARD %c v${CARD_VERSION} `,
@@ -39,6 +39,7 @@ class PawsyncFeederCard extends HTMLElement {
     this._config = {
       title: "Pet Feeder",
       grams_per_portion: 9.0,
+      unit_system: "auto",
       show_header: true,
       show_quick_feed: true,
       show_schedule: true,
@@ -161,6 +162,38 @@ class PawsyncFeederCard extends HTMLElement {
     return null;
   }
 
+  _isMetric() {
+    if (this._config.unit_system === "metric") return true;
+    if (this._config.unit_system === "imperial") return false;
+    if (this._hass && this._hass.config && this._hass.config.unit_system) {
+      if (this._hass.config.unit_system.is_metric !== undefined) {
+        return this._hass.config.unit_system.is_metric;
+      }
+      if (this._hass.config.unit_system.length === "mi" || this._hass.config.unit_system.mass === "lb") {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  _formatWeight(grams, precision = 1) {
+    if (grams === null || grams === undefined || isNaN(grams)) return "--";
+    const g = parseFloat(grams);
+    if (this._isMetric()) {
+      if (g >= 1000) {
+        return `${(g / 1000).toFixed(precision)} kg`;
+      }
+      return `${g.toFixed(precision)} g`;
+    } else {
+      const oz = g * 0.03527396;
+      if (oz >= 16) {
+        const lb = g / 453.59237;
+        return `${lb.toFixed(precision)} lb`;
+      }
+      return `${oz.toFixed(precision)} oz`;
+    }
+  }
+
   _getKibbleDensity() {
     // Read calibrated density from number.<feeder>_grams_per_portion_kibble_calibration
     const densityEntity = this._getEntity("number", "grams_per_portion_kibble_calibration");
@@ -188,6 +221,12 @@ class PawsyncFeederCard extends HTMLElement {
       `sensor.${feeder.prefix}_last_meal_amount_consumed`,
       `sensor.${feeder.prefix}_last_meal_time`,
       `sensor.${feeder.prefix}_total_eaten_today`,
+      `sensor.${feeder.prefix}_food_in_tank`,
+      `sensor.${feeder.prefix}_food_tank_level`,
+      `sensor.${feeder.prefix}_days_to_empty_tank`,
+      `text_sensor.${feeder.prefix}_last_adjusted_meal`,
+      `text_sensor.${feeder.prefix}_last_adjusted_meal_notes`,
+      `switch.${feeder.prefix}_tank_projection_rolling_average_mode`,
     ];
     for (const key of keysToCheck) {
       if (oldHass.states[key] !== newHass.states[key]) return true;
@@ -398,11 +437,50 @@ class PawsyncFeederCard extends HTMLElement {
     const lastMealTime = this._getEntity("text_sensor", "last_meal_time") || this._getEntity("sensor", "last_meal_time");
     const nextMeal = this._getEntity("sensor", "next_scheduled_meal");
 
+    // Tank Accounting & Audit Entities
+    const foodInTank = this._getEntity("sensor", "food_in_tank");
+    const foodTankLevel = this._getEntity("sensor", "food_tank_level");
+    const daysToEmpty = this._getEntity("sensor", "days_to_empty_tank");
+    const lastAdjMeal = this._getEntity("text_sensor", "last_adjusted_meal");
+    const lastAdjNotes = this._getEntity("text_sensor", "last_adjusted_meal_notes");
+    const tankModeSw = this._getEntity("switch", "tank_projection_rolling_average_mode");
+
     // Dynamic calibrated kibble density
     const density = this._getKibbleDensity();
+    const isMetric = this._isMetric();
 
     const isEating = petEating && petEating.state === "on";
-    const currentWeight = bowlWeight ? parseFloat(bowlWeight.state).toFixed(1) : "0.0";
+    const bowlWeightVal = bowlWeight && !isNaN(parseFloat(bowlWeight.state)) ? parseFloat(bowlWeight.state) : 0.0;
+    const currentWeightDisplay = isMetric
+      ? bowlWeightVal.toFixed(1)
+      : (bowlWeightVal * 0.03527396).toFixed(1);
+    const weightUnit = isMetric ? "g" : "oz";
+    const densityUnit = isMetric ? "g/p" : "oz/p";
+    const densityVal = isMetric ? density.toFixed(1) : (density * 0.03527396).toFixed(1);
+
+    // Tank Level and remaining calculations
+    let tankPct = 100;
+    if (foodTankLevel && foodTankLevel.state && !isNaN(parseFloat(foodTankLevel.state))) {
+      tankPct = Math.min(100, Math.max(0, Math.round(parseFloat(foodTankLevel.state))));
+    }
+    let tankRemainingG = 1600;
+    if (foodInTank && foodInTank.state && !isNaN(parseFloat(foodInTank.state))) {
+      tankRemainingG = Math.max(0, parseFloat(foodInTank.state));
+    }
+    const tankRemainingDisplay = this._formatWeight(tankRemainingG, 1);
+
+    let daysToEmptyDisplay = "--";
+    if (daysToEmpty && daysToEmpty.state && !isNaN(parseFloat(daysToEmpty.state))) {
+      const d = parseFloat(daysToEmpty.state);
+      daysToEmptyDisplay = `${d.toFixed(1)} d`;
+    }
+
+    const hasAdjNotes =
+      lastAdjNotes &&
+      lastAdjNotes.state &&
+      lastAdjNotes.state !== "None" &&
+      lastAdjNotes.state !== "unknown" &&
+      lastAdjNotes.state.trim() !== "";
 
     // 4 Key Small Stats Calculations
     const planned = this._calculatePlannedToday(density);
@@ -415,13 +493,14 @@ class PawsyncFeederCard extends HTMLElement {
 
     let lastEatDisplay = "--";
     if (lastMealAmount && lastMealAmount.state && lastMealAmount.state !== "unknown") {
-      const g = parseFloat(lastMealAmount.state).toFixed(1);
+      const g = parseFloat(lastMealAmount.state);
+      const formattedEat = this._formatWeight(g, 1);
       let timeStr = "";
       if (lastMealTime && lastMealTime.state && lastMealTime.state !== "unknown") {
         const match = String(lastMealTime.state).match(/(\d{1,2}:\d{2})/);
         timeStr = match ? match[1] : String(lastMealTime.state);
       }
-      lastEatDisplay = timeStr ? `${g}g · ${timeStr}` : `${g}g`;
+      lastEatDisplay = timeStr ? `${formattedEat} · ${timeStr}` : formattedEat;
     }
 
     const schedules = this._localSchedules[feeder.prefix] || [];
@@ -619,6 +698,131 @@ class PawsyncFeederCard extends HTMLElement {
           font-size: 11px;
           font-weight: normal;
           color: var(--pawsync-secondary-text);
+        }
+
+        /* Food Tank Storage Section */
+        .tank-card {
+          background: var(--pawsync-surface);
+          border: 1px solid var(--pawsync-border);
+          border-radius: 14px;
+          padding: 12px 14px;
+          margin-bottom: 14px;
+        }
+        .tank-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 8px;
+        }
+        .tank-title {
+          font-size: 13px;
+          font-weight: 700;
+          color: var(--pawsync-text);
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .tank-actions {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .tank-btn {
+          background: var(--pawsync-card-bg);
+          border: 1px solid var(--pawsync-border);
+          color: var(--pawsync-text);
+          font-size: 11px;
+          font-weight: 600;
+          padding: 4px 8px;
+          border-radius: 8px;
+          cursor: pointer;
+          transition: all 0.15s;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .tank-btn:hover {
+          background: rgba(var(--pawsync-primary-rgb), 0.1);
+          border-color: var(--pawsync-primary);
+        }
+        .tank-gauge-row {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin: 6px 0 10px 0;
+        }
+        .tank-bar-container {
+          flex: 1;
+          height: 10px;
+          background: var(--pawsync-border);
+          border-radius: 5px;
+          overflow: hidden;
+        }
+        .tank-bar-fill {
+          height: 100%;
+          border-radius: 5px;
+          transition: width 0.3s ease;
+        }
+        .tank-bar-fill.normal { background: #4caf50; }
+        .tank-bar-fill.low { background: #ff9800; }
+        .tank-bar-fill.crit { background: #f44336; }
+        .tank-pct-label {
+          font-size: 13px;
+          font-weight: 800;
+          color: var(--pawsync-text);
+          min-width: 38px;
+          text-align: right;
+        }
+        .tank-stats-row {
+          display: grid;
+          grid-template-columns: 1fr 1fr 1fr;
+          gap: 8px;
+          padding-top: 8px;
+          border-top: 1px solid var(--pawsync-border);
+        }
+        .tank-stat {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .tank-stat-label {
+          font-size: 10px;
+          text-transform: uppercase;
+          font-weight: 700;
+          color: var(--pawsync-secondary-text);
+        }
+        .tank-stat-val {
+          font-size: 12.5px;
+          font-weight: 700;
+          color: var(--pawsync-text);
+        }
+        .tank-audit-box {
+          margin-top: 10px;
+          background: rgba(var(--pawsync-primary-rgb), 0.08);
+          border: 1px solid rgba(var(--pawsync-primary-rgb), 0.2);
+          border-radius: 8px;
+          padding: 8px 10px;
+          display: flex;
+          align-items: flex-start;
+          gap: 8px;
+        }
+        .tank-audit-icon {
+          font-size: 14px;
+          line-height: 1.2;
+        }
+        .tank-audit-content {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .tank-audit-title {
+          font-size: 11px;
+          font-weight: 700;
+          color: var(--pawsync-primary);
+        }
+        .tank-audit-text {
+          font-size: 11px;
+          color: var(--pawsync-text);
         }
 
         /* Quick Feed Bar */
@@ -1054,7 +1258,7 @@ class PawsyncFeederCard extends HTMLElement {
           </div>
           <div class="status-chips">
             <div class="chip density" title="Calibrated kibble density">
-              ⚖️ ${density}g/p
+              ⚖️ ${densityVal}${densityUnit}
             </div>
             ${
               foodLow
@@ -1097,8 +1301,8 @@ class PawsyncFeederCard extends HTMLElement {
               : ""
           }
           <div class="weight-display">
-            <span class="weight-number">${currentWeight}</span>
-            <span class="weight-unit">g</span>
+            <span class="weight-number">${currentWeightDisplay}</span>
+            <span class="weight-unit">${weightUnit}</span>
           </div>
           <div class="weight-sub">Bowl Food Weight</div>
 
@@ -1106,7 +1310,7 @@ class PawsyncFeederCard extends HTMLElement {
           <div class="stats-grid">
             <div class="stat-item">
               <div class="stat-label">Planned Serving Today</div>
-              <div class="stat-val">${planned.grams}g <span class="stat-sub">(${planned.portions}p)</span></div>
+              <div class="stat-val">${this._formatWeight(planned.grams, 0)} <span class="stat-sub">(${planned.portions}p)</span></div>
             </div>
             <div class="stat-item">
               <div class="stat-label">Next Scheduled Meal</div>
@@ -1118,9 +1322,67 @@ class PawsyncFeederCard extends HTMLElement {
             </div>
             <div class="stat-item">
               <div class="stat-label">Total Eaten Today</div>
-              <div class="stat-val">${eatenToday}g</div>
+              <div class="stat-val">${this._formatWeight(eatenToday, 1)}</div>
             </div>
           </div>
+        </div>
+
+        <!-- Food Tank Storage Card -->
+        <div class="tank-card">
+          <div class="tank-header">
+            <div class="tank-title">
+              <span>🥫</span> Food Tank Storage
+            </div>
+            <div class="tank-actions">
+              ${
+                tankModeSw
+                  ? `<button class="tank-btn" id="toggle-tank-mode" title="Toggle between 3-Day Rolling Avg and Active Plan Mode">
+                       ${tankModeSw.state === "on" ? "📈 3-Day Avg" : "📅 Plan Mode"}
+                     </button>`
+                  : ""
+              }
+              <button class="tank-btn" id="refill-tank-btn" title="Reset Tank Food to Full (Refill)">
+                🔄 Refill
+              </button>
+            </div>
+          </div>
+
+          <div class="tank-gauge-row">
+            <div class="tank-bar-container">
+              <div class="tank-bar-fill ${tankPct < 15 ? "crit" : tankPct < 30 ? "low" : "normal"}" style="width: ${tankPct}%;"></div>
+            </div>
+            <div class="tank-pct-label">${tankPct}%</div>
+          </div>
+
+          <div class="tank-stats-row">
+            <div class="tank-stat">
+              <span class="tank-stat-label">Remaining</span>
+              <span class="tank-stat-val">${tankRemainingDisplay}</span>
+            </div>
+            <div class="tank-stat">
+              <span class="tank-stat-label">Days to Empty</span>
+              <span class="tank-stat-val">${daysToEmptyDisplay}</span>
+            </div>
+            <div class="tank-stat">
+              <span class="tank-stat-label">Projection</span>
+              <span class="tank-stat-val">${tankModeSw && tankModeSw.state === "on" ? "3-Day Avg" : "Active Plan"}</span>
+            </div>
+          </div>
+
+          <!-- Intelligent Feeding Audit Note -->
+          ${
+            hasAdjNotes
+              ? `
+            <div class="tank-audit-box">
+              <div class="tank-audit-icon">💡</div>
+              <div class="tank-audit-content">
+                <div class="tank-audit-title">Intelligent Feeding Adjustment</div>
+                <div class="tank-audit-text">${lastAdjNotes.state}</div>
+              </div>
+            </div>
+          `
+              : ""
+          }
         </div>
 
         <!-- Quick Feed Bar -->
@@ -1132,7 +1394,7 @@ class PawsyncFeederCard extends HTMLElement {
               <button class="stepper-btn" id="sub-portion">-</button>
               <div class="stepper-label">
                 ${this._manualPortions} portion${this._manualPortions > 1 ? "s" : ""}<br>
-                <small style="color:var(--pawsync-secondary-text); font-weight:normal;">~${(this._manualPortions * density).toFixed(0)}g</small>
+                <small style="color:var(--pawsync-secondary-text); font-weight:normal;">~${this._formatWeight(this._manualPortions * density, 0)}</small>
               </div>
               <button class="stepper-btn" id="add-portion">+</button>
             </div>
@@ -1385,6 +1647,28 @@ class PawsyncFeederCard extends HTMLElement {
       tareBtn.addEventListener("click", () => this._tare());
     }
 
+    // Tank Projection Mode toggle button
+    const toggleTankModeBtn = this.shadowRoot.getElementById("toggle-tank-mode");
+    if (toggleTankModeBtn) {
+      toggleTankModeBtn.addEventListener("click", () => {
+        const sw = this._getEntity("switch", "tank_projection_rolling_average_mode");
+        if (sw) {
+          this._callService("switch", "toggle", { entity_id: sw.entity_id });
+        }
+      });
+    }
+
+    // Refill Tank button
+    const refillTankBtn = this.shadowRoot.getElementById("refill-tank-btn");
+    if (refillTankBtn) {
+      refillTankBtn.addEventListener("click", () => {
+        const btn = this._getEntity("button", "reset_tank_food_refill");
+        if (btn) {
+          this._callService("button", "press", { entity_id: btn.entity_id });
+        }
+      });
+    }
+
     // Meal toggle switches
     this.shadowRoot.querySelectorAll("input[data-toggle-idx]").forEach((chk) => {
       chk.addEventListener("change", (e) => {
@@ -1557,6 +1841,15 @@ class PawsyncFeederCardEditor extends HTMLElement {
             style="width:100%; padding:8px; border-radius:6px; border:1px solid #ccc; box-sizing:border-box;">
         </div>
 
+        <div>
+          <label style="font-weight:600; font-size:13px; display:block; margin-bottom:4px;">Display Units</label>
+          <select id="unit_system" style="width:100%; padding:8px; border-radius:6px; border:1px solid #ccc; box-sizing:border-box; background:white;">
+            <option value="auto" ${config.unit_system === "auto" || !config.unit_system ? "selected" : ""}>Auto (Home Assistant System Default)</option>
+            <option value="metric" ${config.unit_system === "metric" ? "selected" : ""}>Metric (Grams, Liters)</option>
+            <option value="imperial" ${config.unit_system === "imperial" ? "selected" : ""}>Imperial (Ounces, Cups, Pounds)</option>
+          </select>
+        </div>
+
         <div style="display:flex; align-items:center; gap:8px;">
           <input type="checkbox" id="default_collapsed" ${config.default_collapsed !== false ? "checked" : ""}>
           <label for="default_collapsed" style="font-weight:600; font-size:13px;">Default Feeding Schedule to Collapsed</label>
@@ -1567,6 +1860,7 @@ class PawsyncFeederCardEditor extends HTMLElement {
     const titleInput = this.querySelector("#title");
     const prefixInput = this.querySelector("#feeder_prefix");
     const gramsInput = this.querySelector("#grams_per_portion");
+    const unitInput = this.querySelector("#unit_system");
     const collapsedInput = this.querySelector("#default_collapsed");
 
     const updateConfig = () => {
@@ -1575,6 +1869,7 @@ class PawsyncFeederCardEditor extends HTMLElement {
         title: titleInput ? titleInput.value : "Pet Feeder",
         feeder_prefix: prefixInput && prefixInput.value ? prefixInput.value.trim() : undefined,
         grams_per_portion: gramsInput ? parseFloat(gramsInput.value) || 9.0 : 9.0,
+        unit_system: unitInput ? unitInput.value : "auto",
         default_collapsed: collapsedInput ? collapsedInput.checked : true,
       };
       const event = new CustomEvent("config-changed", {
@@ -1588,6 +1883,7 @@ class PawsyncFeederCardEditor extends HTMLElement {
     if (titleInput) titleInput.addEventListener("change", updateConfig);
     if (prefixInput) prefixInput.addEventListener("change", updateConfig);
     if (gramsInput) gramsInput.addEventListener("change", updateConfig);
+    if (unitInput) unitInput.addEventListener("change", updateConfig);
     if (collapsedInput) collapsedInput.addEventListener("change", updateConfig);
   }
 }

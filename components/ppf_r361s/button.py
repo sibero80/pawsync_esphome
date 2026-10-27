@@ -10,6 +10,7 @@ CONF_TARE = "tare"
 CONF_FEED = "feed"
 CONF_CALIBRATE_PORTION = "calibrate_portion"
 CONF_RESET_DESICCANT = "reset_desiccant"
+CONF_RESET_TANK_FOOD = "reset_tank_food"
 CONF_PORTIONS = "portions"
 CONF_SOUND = "sound"
 
@@ -17,6 +18,7 @@ PPFR361STareButton = ppf_r361s_ns.class_("PPFR361STareButton", button.Button)
 PPFR361SFeedButton = ppf_r361s_ns.class_("PPFR361SFeedButton", button.Button)
 PPFR361SCalibrateButton = ppf_r361s_ns.class_("PPFR361SCalibrateButton", button.Button)
 PPFR361SResetDesiccantButton = ppf_r361s_ns.class_("PPFR361SResetDesiccantButton", button.Button)
+PPFR361SResetTankFoodButton = ppf_r361s_ns.class_("PPFR361SResetTankFoodButton", button.Button)
 
 FEED_SCHEMA = button.button_schema(
     PPFR361SFeedButton,
@@ -44,6 +46,10 @@ CONFIG_SCHEMA = cv.Schema(
             PPFR361SResetDesiccantButton,
             icon="mdi:refresh",
         ),
+        cv.Optional(CONF_RESET_TANK_FOOD): button.button_schema(
+            PPFR361SResetTankFoodButton,
+            icon="mdi:refresh-auto",
+        ),
     }
 )
 
@@ -63,4 +69,7 @@ async def to_code(config):
         await cg.register_parented(btn, hub)
     if desiccant_config := config.get(CONF_RESET_DESICCANT):
         btn = await button.new_button(desiccant_config)
+        await cg.register_parented(btn, hub)
+    if tank_refill_config := config.get(CONF_RESET_TANK_FOOD):
+        btn = await button.new_button(tank_refill_config)
         await cg.register_parented(btn, hub)

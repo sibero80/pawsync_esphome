@@ -2,7 +2,7 @@
 
 DOMAIN = "pawsync"
 NAME = "Pawsync Smart Pet Feeder"
-VERSION = "1.0.6"
+VERSION = "1.0.8"
 
 # Cloud API Endpoints
 PAWSYNC_API_BASE = "https://smartapi.pawsync.com"
@@ -34,7 +34,13 @@ FLASH_METHOD_SKIP = "manual_skip"
 # Frontend / Card
 CARD_FILENAME = "pawsync-feeder-card.js"
 CARD_URL_PATH = "/pawsync/pawsync-feeder-card.js"
-CARD_VERSION = "1.2.3"
+CARD_VERSION = "1.3.0"
+
+# Unit System Preferences
+CONF_UNIT_SYSTEM = "unit_system"
+UNIT_SYSTEM_METRIC = "metric"
+UNIT_SYSTEM_IMPERIAL = "imperial"
+UNIT_SYSTEM_AUTO = "auto"
 
 # OTA Staging Constants
 DEFAULT_STAGING_PORT = 8000

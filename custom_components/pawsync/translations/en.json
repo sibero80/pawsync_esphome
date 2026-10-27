@@ -30,6 +30,7 @@
         "data": {
           "wifi_ssid": "Home Wi-Fi SSID (2.4GHz)",
           "wifi_password": "Wi-Fi Password",
+          "unit_system": "Preferred Unit System",
           "confirm_prerequisites": "I have verified the feeder is powered on and within Wi-Fi range"
         }
       },
@@ -45,7 +46,8 @@
         "description": "Enter the IP address or hostname of your previously flashed ESPHome Pawsync Feeder.",
         "data": {
           "name": "Feeder Name",
-          "host": "Device IP Address or Hostname"
+          "host": "Device IP Address or Hostname",
+          "unit_system": "Preferred Unit System"
         }
       }
     },
@@ -64,6 +66,17 @@
     },
     "create_entry": {
       "default": "Feeder adopted successfully!\n\nDevice: {feeder_name}\nLocal IP: {ip}\n\nESPHome API Encryption Key:\n{noise_psk}\n\nHome Assistant is automatically adopting the ESPHome connection in the background. If prompted by Home Assistant for an encryption key, use the key above."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "PawSync Integration Options",
+        "description": "Configure preferences for your PawSync Smart Pet Feeder.",
+        "data": {
+          "unit_system": "Preferred Unit System"
+        }
+      }
     }
   }
 }

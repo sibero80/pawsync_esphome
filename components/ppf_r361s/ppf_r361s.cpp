@@ -26,6 +26,9 @@ void PPFR361SComponent::setup() {
   // Load persistent meal consumption statistics from NVS
   this->load_meal_storage_from_nvs_();
 
+  // Load persistent tank food accounting from NVS
+  this->load_tank_storage_from_nvs_();
+
   // Indicate solid connected Wi-Fi state to coprocessor front LED
   this->set_wifi_led(2);
 
@@ -76,6 +79,7 @@ void PPFR361SComponent::setup() {
     this->stock_calibration_switch_->publish_state(this->use_stock_calibration_);
 
   this->publish_meal_stats_();
+  this->publish_tank_stats_();
 }
 
 void PPFR361SComponent::loop() {
@@ -183,11 +187,18 @@ void PPFR361SComponent::loop() {
           this->portions_today_sensor_->publish_state(0);
         if (this->meal_storage_.total_eaten_today_g > 0.0f) {
           ESP_LOGI(TAG, "New day (%d): Resetting daily total eaten counter to 0g", now.day_of_year);
+          // Shift 3-day consumption history for rolling average
+          this->tank_storage_.past_days_consumed_g[2] = this->tank_storage_.past_days_consumed_g[1];
+          this->tank_storage_.past_days_consumed_g[1] = this->tank_storage_.past_days_consumed_g[0];
+          this->tank_storage_.past_days_consumed_g[0] = this->meal_storage_.total_eaten_today_g;
+          this->save_tank_storage_to_nvs_();
+
           this->meal_storage_.total_eaten_today_g = 0.0f;
           this->meal_storage_.last_day_of_year = now.day_of_year;
           this->save_meal_storage_to_nvs_();
           if (this->total_eaten_today_sensor_ != nullptr)
             this->total_eaten_today_sensor_->publish_state(0.0f);
+          this->calculate_and_publish_days_to_empty_();
         }
       }
       if (now.minute != this->last_scheduled_minute_) {
@@ -207,6 +218,9 @@ void PPFR361SComponent::dump_config() {
   LOG_SENSOR("  ", "Last Meal Consumed", this->last_meal_consumed_sensor_);
   LOG_SENSOR("  ", "Last Meal Duration", this->last_meal_duration_sensor_);
   LOG_SENSOR("  ", "Total Eaten Today", this->total_eaten_today_sensor_);
+  LOG_SENSOR("  ", "Food in Tank", this->food_in_tank_sensor_);
+  LOG_SENSOR("  ", "Food Tank Level", this->food_tank_level_sensor_);
+  LOG_SENSOR("  ", "Days to Empty Tank", this->days_to_empty_tank_sensor_);
   LOG_BINARY_SENSOR("  ", "Power Adapter (AC)", this->power_adapter_sensor_);
   LOG_BINARY_SENSOR("  ", "Food Hopper Low", this->food_low_sensor_);
   LOG_BINARY_SENSOR("  ", "Motor Jammed", this->motor_jammed_sensor_);
@@ -216,12 +230,17 @@ void PPFR361SComponent::dump_config() {
   LOG_TEXT_SENSOR("  ", "Next Scheduled Meal", this->next_meal_sensor_);
   LOG_TEXT_SENSOR("  ", "Schedule Summary", this->schedule_summary_sensor_);
   LOG_TEXT_SENSOR("  ", "Last Meal Time", this->last_meal_time_sensor_);
+  LOG_TEXT_SENSOR("  ", "Last Adjusted Meal", this->last_adjusted_meal_sensor_);
+  LOG_TEXT_SENSOR("  ", "Last Adjusted Meal Notes", this->last_adjusted_meal_notes_sensor_);
   LOG_SWITCH("  ", "Child Lock", this->child_lock_switch_);
   LOG_SWITCH("  ", "Slow Feed", this->slow_feed_switch_);
   LOG_SWITCH("  ", "Sleep Mode", this->sleep_mode_switch_);
   LOG_SWITCH("  ", "Intelligent Feeding", this->intelligent_feeding_switch_);
   LOG_SWITCH("  ", "Stock Calibration Mode", this->stock_calibration_switch_);
+  LOG_SWITCH("  ", "Tank Projection Mode", this->tank_projection_mode_switch_);
   LOG_NUMBER("  ", "Manual Feed Portions", this->manual_feed_portions_number_);
+  LOG_NUMBER("  ", "Tank Refill Volume", this->tank_refill_volume_number_);
+  LOG_NUMBER("  ", "Tank Refill Weight", this->tank_refill_weight_number_);
 
   ESP_LOGCONFIG(TAG, "  On-Device Schedule: Active Plan %u, Portion Density: %.1fg/portion, Intelligent: %s",
                 this->storage_.active_plan_idx + 1,
@@ -388,6 +407,16 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
         bool food_low = (klv.at(4)[0] != 0);
         if (this->food_low_sensor_ != nullptr)
           this->food_low_sensor_->publish_state(food_low);
+
+        // Optical Sensor Self-Correction:
+        // When sensor trips to LOW, clamp food remaining to reserve constant (default 150g)
+        if (food_low && this->tank_storage_.current_food_in_tank_g > this->tank_storage_.reserve_constant_g) {
+          ESP_LOGI(TAG, "Optical low-food sensor reached: Auto-calibrating remaining food to reserve constant (%.1fg)",
+                   this->tank_storage_.reserve_constant_g);
+          this->tank_storage_.current_food_in_tank_g = this->tank_storage_.reserve_constant_g;
+          this->save_tank_storage_to_nvs_();
+          this->publish_tank_stats_();
+        }
       }
 
       // Key 5: battery_percent (0 = not installed / absent, 1-100% installed)
@@ -558,6 +587,17 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
           float grams = mcu_total > 0 ? static_cast<float>(mcu_total) : (static_cast<float>(delta_portions) * this->storage_.grams_per_portion);
           if (this->last_feed_weight_sensor_ != nullptr)
             this->last_feed_weight_sensor_->publish_state(grams);
+
+          // Deduct from tank food accounting
+          if (grams > 0.0f) {
+            if (this->tank_storage_.current_food_in_tank_g >= grams) {
+              this->tank_storage_.current_food_in_tank_g -= grams;
+            } else {
+              this->tank_storage_.current_food_in_tank_g = 0.0f;
+            }
+            this->save_tank_storage_to_nvs_();
+            this->publish_tank_stats_();
+          }
 
           if (this->status_text_sensor_ != nullptr && this->calib_state_ == CALIB_IDLE)
             this->status_text_sensor_->publish_state("Feeding Complete");
@@ -1195,12 +1235,40 @@ void PPFR361SComponent::evaluate_schedules_(const ESPTime &now) {
             portions_to_feed = 0;
             ESP_LOGI(TAG, "Intelligent feed: Bowl has %.1fg (>= target %.1fg). Skipping meal %zu.",
                      bowl_w, target_weight, m + 1);
+
+            char tbuf[32];
+            snprintf(tbuf, sizeof(tbuf), "%04d-%02d-%02d %02d:%02d",
+                     now.year, now.month, now.day_of_month, now.hour, now.minute);
+            strncpy(this->tank_storage_.last_adjusted_meal_time_str, tbuf, sizeof(this->tank_storage_.last_adjusted_meal_time_str));
+            this->tank_storage_.last_adjusted_meal_epoch = now.timestamp;
+
+            snprintf(this->tank_storage_.last_adjusted_meal_notes,
+                     sizeof(this->tank_storage_.last_adjusted_meal_notes),
+                     "Meal %zu (%02u:%02u): Skipped (Bowl has %.0fg >= target %.0fg)",
+                     m + 1, meal.hour, meal.minute, bowl_w, target_weight);
+            this->save_tank_storage_to_nvs_();
+            this->publish_tank_stats_();
           } else {
             float needed = target_weight - bowl_w;
             portions_to_feed = static_cast<uint16_t>(std::ceil(needed / g_per_portion));
             if (portions_to_feed > meal.portions) portions_to_feed = meal.portions;
             ESP_LOGI(TAG, "Intelligent feed: Bowl has %.1fg. Adjusted meal %zu portions from %d to %d (target %.1fg)",
                      bowl_w, m + 1, meal.portions, portions_to_feed, target_weight);
+
+            if (portions_to_feed != meal.portions) {
+              char tbuf[32];
+              snprintf(tbuf, sizeof(tbuf), "%04d-%02d-%02d %02d:%02d",
+                       now.year, now.month, now.day_of_month, now.hour, now.minute);
+              strncpy(this->tank_storage_.last_adjusted_meal_time_str, tbuf, sizeof(this->tank_storage_.last_adjusted_meal_time_str));
+              this->tank_storage_.last_adjusted_meal_epoch = now.timestamp;
+
+              snprintf(this->tank_storage_.last_adjusted_meal_notes,
+                       sizeof(this->tank_storage_.last_adjusted_meal_notes),
+                       "Meal %zu (%02u:%02u): Reduced from %dp to %dp (-%.0fg)",
+                       m + 1, meal.hour, meal.minute, meal.portions, portions_to_feed, bowl_w);
+              this->save_tank_storage_to_nvs_();
+              this->publish_tank_stats_();
+            }
           }
         }
       }
@@ -1487,6 +1555,170 @@ void PPFR361SComponent::rollback_to_stock_firmware() {
 #else
   ESP_LOGE(TAG, "Rollback to stock firmware is only supported under ESP-IDF framework.");
 #endif
+}
+
+void PPFR361SComponent::load_tank_storage_from_nvs_() {
+  ESPPreferenceObject pref = global_preferences->make_preference<TankStorage>(fnv1_hash("ppf_r361s_tank"), true);
+  if (!pref.load(&this->tank_storage_) || this->tank_storage_.magic != 0x54414E4B) {
+    ESP_LOGI(TAG, "Initializing default tank storage in NVS flash...");
+    this->tank_storage_ = TankStorage{};
+    this->tank_storage_.magic = 0x54414E4B;
+    this->tank_storage_.initial_tank_weight_g = 1600.0f;
+    this->tank_storage_.current_food_in_tank_g = 1600.0f;
+    this->tank_storage_.tank_calibration_volume_l = 4.0f;
+    this->tank_storage_.tank_calibration_weight_g = 0.0f;
+    this->tank_storage_.reserve_constant_g = 150.0f;
+    this->save_tank_storage_to_nvs_();
+  } else {
+    ESP_LOGI(TAG, "Loaded tank storage from NVS: Food remaining %.1fg / %.1fg (%.1fL)",
+             this->tank_storage_.current_food_in_tank_g,
+             this->tank_storage_.initial_tank_weight_g,
+             this->tank_storage_.tank_calibration_volume_l);
+  }
+}
+
+void PPFR361SComponent::save_tank_storage_to_nvs_() {
+  ESPPreferenceObject pref = global_preferences->make_preference<TankStorage>(fnv1_hash("ppf_r361s_tank"), true);
+  pref.save(&this->tank_storage_);
+}
+
+void PPFR361SComponent::publish_tank_stats_() {
+  float current_g = this->tank_storage_.current_food_in_tank_g;
+  if (current_g < 0.0f) current_g = 0.0f;
+  float initial_g = this->tank_storage_.initial_tank_weight_g;
+  if (initial_g < 100.0f) initial_g = 1600.0f;
+
+  float level_pct = (current_g / initial_g) * 100.0f;
+  if (level_pct > 100.0f) level_pct = 100.0f;
+  if (level_pct < 0.0f) level_pct = 0.0f;
+
+  if (this->food_in_tank_sensor_ != nullptr)
+    this->food_in_tank_sensor_->publish_state(current_g);
+  if (this->food_tank_level_sensor_ != nullptr)
+    this->food_tank_level_sensor_->publish_state(level_pct);
+  if (this->tank_refill_volume_number_ != nullptr)
+    this->tank_refill_volume_number_->publish_state(this->tank_storage_.tank_calibration_volume_l);
+  if (this->tank_refill_weight_number_ != nullptr)
+    this->tank_refill_weight_number_->publish_state(this->tank_storage_.tank_calibration_weight_g);
+  if (this->tank_projection_mode_switch_ != nullptr)
+    this->tank_projection_mode_switch_->publish_state(this->tank_storage_.projection_use_rolling_avg);
+
+  if (this->last_adjusted_meal_sensor_ != nullptr)
+    this->last_adjusted_meal_sensor_->publish_state(this->tank_storage_.last_adjusted_meal_time_str);
+  if (this->last_adjusted_meal_notes_sensor_ != nullptr)
+    this->last_adjusted_meal_notes_sensor_->publish_state(this->tank_storage_.last_adjusted_meal_notes);
+
+  this->calculate_and_publish_days_to_empty_();
+}
+
+void PPFR361SComponent::calculate_and_publish_days_to_empty_() {
+  if (this->days_to_empty_tank_sensor_ == nullptr) return;
+
+  float current_g = this->tank_storage_.current_food_in_tank_g;
+  if (current_g <= 0.0f) {
+    this->days_to_empty_tank_sensor_->publish_state(0.0f);
+    return;
+  }
+
+  float daily_burn_g = 0.0f;
+
+  if (this->tank_storage_.projection_use_rolling_avg) {
+    // Mode B: 3-Day Rolling Average
+    float sum = 0.0f;
+    int count = 0;
+    for (int i = 0; i < 3; i++) {
+      if (this->tank_storage_.past_days_consumed_g[i] > 1.0f) {
+        sum += this->tank_storage_.past_days_consumed_g[i];
+        count++;
+      }
+    }
+    if (count > 0) {
+      daily_burn_g = sum / static_cast<float>(count);
+    } else if (this->meal_storage_.total_eaten_today_g > 1.0f) {
+      daily_burn_g = this->meal_storage_.total_eaten_today_g;
+    }
+  }
+
+  // Fallback to Mode A if rolling average is 0 or if Mode A is active
+  if (daily_burn_g <= 1.0f) {
+    // Mode A: Active Plan Scheduled Daily Burn
+    uint8_t plan_idx = this->storage_.active_plan_idx;
+    if (plan_idx >= MAX_PLANS) plan_idx = 0;
+    const auto &plan = this->storage_.plans[plan_idx];
+    uint16_t planned_portions = 0;
+    if (plan.enabled) {
+      for (size_t m = 0; m < MAX_MEALS_PER_PLAN; m++) {
+        if (plan.meals[m].enabled) {
+          planned_portions += plan.meals[m].portions;
+        }
+      }
+    }
+    float g_per_portion = this->storage_.grams_per_portion > 0 ? this->storage_.grams_per_portion : 8.0f;
+    daily_burn_g = planned_portions * g_per_portion;
+  }
+
+  if (daily_burn_g > 1.0f) {
+    float days = current_g / daily_burn_g;
+    this->days_to_empty_tank_sensor_->publish_state(days);
+  } else {
+    this->days_to_empty_tank_sensor_->publish_state(NAN);
+  }
+}
+
+void PPFR361SComponent::reset_tank_food() {
+  ESP_LOGI(TAG, "Tank refill button triggered! Recalibrating tank food capacity...");
+  float initial_g = 0.0f;
+
+  if (this->tank_storage_.tank_calibration_weight_g > 0.0f) {
+    initial_g = this->tank_storage_.tank_calibration_weight_g;
+    ESP_LOGI(TAG, "Refill set via explicit weight entry: %.1fg", initial_g);
+  } else {
+    // Derive from volume and portion density
+    float vol_l = this->tank_storage_.tank_calibration_volume_l;
+    if (vol_l <= 0.0f) vol_l = 4.0f;
+    float g_per_portion = this->storage_.grams_per_portion > 0 ? this->storage_.grams_per_portion : 8.0f;
+    // Standard impeller pocket volume is ~18ml per portion
+    float bulk_density = g_per_portion / 18.0f; // g/ml
+    initial_g = vol_l * 1000.0f * bulk_density;
+    ESP_LOGI(TAG, "Refill derived from volume (%.1fL * %.3fg/ml): %.1fg", vol_l, bulk_density, initial_g);
+  }
+
+  this->tank_storage_.initial_tank_weight_g = initial_g;
+  this->tank_storage_.current_food_in_tank_g = initial_g;
+  if (this->time_ != nullptr && this->time_->now().is_valid()) {
+    this->tank_storage_.last_refill_epoch = this->time_->now().timestamp;
+  }
+  this->save_tank_storage_to_nvs_();
+  this->publish_tank_stats_();
+}
+
+void PPFR361SComponent::set_tank_refill_volume(float volume_l) {
+  if (volume_l > 0.0f && volume_l <= 10.0f) {
+    ESP_LOGI(TAG, "Setting tank refill volume: %.1f L", volume_l);
+    this->tank_storage_.tank_calibration_volume_l = volume_l;
+    if (this->tank_refill_volume_number_ != nullptr)
+      this->tank_refill_volume_number_->publish_state(volume_l);
+    this->save_tank_storage_to_nvs_();
+  }
+}
+
+void PPFR361SComponent::set_tank_refill_weight(float weight_g) {
+  if (weight_g >= 0.0f) {
+    ESP_LOGI(TAG, "Setting tank refill explicit weight: %.1f g", weight_g);
+    this->tank_storage_.tank_calibration_weight_g = weight_g;
+    if (this->tank_refill_weight_number_ != nullptr)
+      this->tank_refill_weight_number_->publish_state(weight_g);
+    this->save_tank_storage_to_nvs_();
+  }
+}
+
+void PPFR361SComponent::set_tank_projection_mode(bool use_rolling_avg) {
+  ESP_LOGI(TAG, "Setting tank projection mode: %s", use_rolling_avg ? "3-Day Rolling Average" : "Scheduled Active Plan");
+  this->tank_storage_.projection_use_rolling_avg = use_rolling_avg;
+  if (this->tank_projection_mode_switch_ != nullptr)
+    this->tank_projection_mode_switch_->publish_state(use_rolling_avg);
+  this->save_tank_storage_to_nvs_();
+  this->calculate_and_publish_days_to_empty_();
 }
 
 }  // namespace ppf_r361s

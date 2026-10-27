@@ -131,6 +131,22 @@ struct ScheduleStorage {
   FeedingPlan plans[MAX_PLANS];
 };
 
+struct TankStorage {
+  uint32_t magic{0x54414E4B};            // 'TANK'
+  float initial_tank_weight_g{1600.0f};  // Base weight when refilled
+  float current_food_in_tank_g{1600.0f}; // Current remaining weight
+  float tank_calibration_volume_l{4.0f}; // Refill volume setting (default 4.0L)
+  float tank_calibration_weight_g{0.0f}; // Optional explicit weight (0 = derive from volume)
+  float reserve_constant_g{150.0f};      // Optical sensor threshold clamp (default 150g)
+  uint32_t last_refill_epoch{0};
+  uint32_t last_adjusted_meal_epoch{0};
+  char last_adjusted_meal_notes[64]{"None"};
+  char last_adjusted_meal_time_str[32]{"Never"};
+  bool projection_use_rolling_avg{false};
+  float past_days_consumed_g[3]{0.0f, 0.0f, 0.0f};
+  uint16_t last_consumption_day{0};
+};
+
 class PPFR361SComponent : public Component, public uart::UARTDevice {
  public:
   void setup() override;
@@ -147,6 +163,9 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   void set_last_meal_consumed_sensor(sensor::Sensor *s) { this->last_meal_consumed_sensor_ = s; }
   void set_last_meal_duration_sensor(sensor::Sensor *s) { this->last_meal_duration_sensor_ = s; }
   void set_total_eaten_today_sensor(sensor::Sensor *s) { this->total_eaten_today_sensor_ = s; }
+  void set_food_in_tank_sensor(sensor::Sensor *s) { this->food_in_tank_sensor_ = s; }
+  void set_food_tank_level_sensor(sensor::Sensor *s) { this->food_tank_level_sensor_ = s; }
+  void set_days_to_empty_tank_sensor(sensor::Sensor *s) { this->days_to_empty_tank_sensor_ = s; }
 
   // Entity setters - Binary Sensors
   void set_power_adapter_sensor(binary_sensor::BinarySensor *s) { this->power_adapter_sensor_ = s; }
@@ -161,6 +180,8 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   void set_next_meal_sensor(text_sensor::TextSensor *s) { this->next_meal_sensor_ = s; }
   void set_schedule_summary_sensor(text_sensor::TextSensor *s) { this->schedule_summary_sensor_ = s; }
   void set_last_meal_time_sensor(text_sensor::TextSensor *s) { this->last_meal_time_sensor_ = s; }
+  void set_last_adjusted_meal_sensor(text_sensor::TextSensor *s) { this->last_adjusted_meal_sensor_ = s; }
+  void set_last_adjusted_meal_notes_sensor(text_sensor::TextSensor *s) { this->last_adjusted_meal_notes_sensor_ = s; }
 
   // Entity setters - Switches
   void set_child_lock_switch(switch_::Switch *s) { this->child_lock_switch_ = s; }
@@ -168,6 +189,7 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   void set_sleep_mode_switch(switch_::Switch *s) { this->sleep_mode_switch_ = s; }
   void set_intelligent_feeding_switch(switch_::Switch *s) { this->intelligent_feeding_switch_ = s; }
   void set_stock_calibration_switch(switch_::Switch *s) { this->stock_calibration_switch_ = s; }
+  void set_tank_projection_mode_switch(switch_::Switch *s) { this->tank_projection_mode_switch_ = s; }
 
   // Calibration Mode Configuration
   void set_use_stock_calibration(bool use_stock);
@@ -176,6 +198,14 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   // Entity setters - Numbers
   void set_manual_feed_portions_number(number::Number *n) { this->manual_feed_portions_number_ = n; }
   void set_grams_per_portion_number(number::Number *n) { this->grams_per_portion_number_ = n; }
+  void set_tank_refill_volume_number(number::Number *n) { this->tank_refill_volume_number_ = n; }
+  void set_tank_refill_weight_number(number::Number *n) { this->tank_refill_weight_number_ = n; }
+
+  // Tank Management APIs
+  void reset_tank_food();
+  void set_tank_refill_volume(float volume_l);
+  void set_tank_refill_weight(float weight_g);
+  void set_tank_projection_mode(bool use_rolling_avg);
 
   // Time provider
   void set_time(time::RealTimeClock *time) { this->time_ = time; }
@@ -254,6 +284,12 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   void check_eating_settle_timeout_();
   void publish_meal_stats_();
 
+  // On-device Tank Accounting Engine
+  void load_tank_storage_from_nvs_();
+  void save_tank_storage_to_nvs_();
+  void publish_tank_stats_();
+  void calculate_and_publish_days_to_empty_();
+
   // Internal state
   std::vector<uint8_t> rx_buffer_;
   uint8_t tx_seq_{0};
@@ -296,6 +332,7 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   uint32_t refill_candidate_start_ms_{0};
   bool feed_just_finished_{false};
   MealSessionStorage meal_storage_;
+  TankStorage tank_storage_;
 
   // Time component
   time::RealTimeClock *time_{nullptr};
@@ -309,6 +346,9 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   sensor::Sensor *last_meal_consumed_sensor_{nullptr};
   sensor::Sensor *last_meal_duration_sensor_{nullptr};
   sensor::Sensor *total_eaten_today_sensor_{nullptr};
+  sensor::Sensor *food_in_tank_sensor_{nullptr};
+  sensor::Sensor *food_tank_level_sensor_{nullptr};
+  sensor::Sensor *days_to_empty_tank_sensor_{nullptr};
 
   binary_sensor::BinarySensor *power_adapter_sensor_{nullptr};
   binary_sensor::BinarySensor *food_low_sensor_{nullptr};
@@ -321,15 +361,20 @@ class PPFR361SComponent : public Component, public uart::UARTDevice {
   text_sensor::TextSensor *next_meal_sensor_{nullptr};
   text_sensor::TextSensor *schedule_summary_sensor_{nullptr};
   text_sensor::TextSensor *last_meal_time_sensor_{nullptr};
+  text_sensor::TextSensor *last_adjusted_meal_sensor_{nullptr};
+  text_sensor::TextSensor *last_adjusted_meal_notes_sensor_{nullptr};
 
   switch_::Switch *child_lock_switch_{nullptr};
   switch_::Switch *slow_feed_switch_{nullptr};
   switch_::Switch *sleep_mode_switch_{nullptr};
   switch_::Switch *intelligent_feeding_switch_{nullptr};
   switch_::Switch *stock_calibration_switch_{nullptr};
+  switch_::Switch *tank_projection_mode_switch_{nullptr};
 
   number::Number *manual_feed_portions_number_{nullptr};
   number::Number *grams_per_portion_number_{nullptr};
+  number::Number *tank_refill_volume_number_{nullptr};
+  number::Number *tank_refill_weight_number_{nullptr};
 };
 
 // Child switch classes
@@ -365,6 +410,13 @@ class PPFR361SStockCalibrationSwitch : public switch_::Switch, public Parented<P
  protected:
   void write_state(bool state) override {
     this->parent_->set_use_stock_calibration(state);
+  }
+};
+
+class PPFR361STankProjectionModeSwitch : public switch_::Switch, public Parented<PPFR361SComponent> {
+ protected:
+  void write_state(bool state) override {
+    this->parent_->set_tank_projection_mode(state);
   }
 };
 
@@ -408,11 +460,34 @@ class PPFR361SResetDesiccantButton : public button::Button, public Parented<PPFR
   }
 };
 
-// Child number class
+class PPFR361SResetTankFoodButton : public button::Button, public Parented<PPFR361SComponent> {
+ protected:
+  void press_action() override {
+    this->parent_->reset_tank_food();
+  }
+};
+
+// Child number classes
 class PPFR361SManualPortionsNumber : public number::Number, public Parented<PPFR361SComponent> {
  protected:
   void control(float value) override {
     this->publish_state(value);
+  }
+};
+
+class PPFR361STankRefillVolumeNumber : public number::Number, public Parented<PPFR361SComponent> {
+ protected:
+  void control(float value) override {
+    this->publish_state(value);
+    this->parent_->set_tank_refill_volume(value);
+  }
+};
+
+class PPFR361STankRefillWeightNumber : public number::Number, public Parented<PPFR361SComponent> {
+ protected:
+  void control(float value) override {
+    this->publish_state(value);
+    this->parent_->set_tank_refill_weight(value);
   }
 };
 
