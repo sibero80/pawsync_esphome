@@ -76,6 +76,7 @@ Communication between the two MCUs takes place over an internal bidirectional UA
   - The local OTA stager (`ota_stager.py`) binds to the local LAN IP and uses cryptographically randomized token paths (`/firmware_<16-hex>.bin`).
   - An automated 10-minute timeout terminates the stager server, preventing persistent open HTTP listeners.
   - Third-party cloud bearer tokens are immediately purged from Home Assistant entry storage (`entry.data[CONF_TOKEN] = None`) once local adoption succeeds.
+  - Firmware binaries are not bundled as opaque blobs in the integration repository; they are dynamically resolved from the open, audited [sibero80/pawsync_ota](https://github.com/sibero80/pawsync_ota) releases with strict container validation, or loaded from local offline storage.
 
 #### 3. Dual-MCU Protocol Abuse & Malformed UART Injections
 - **Threat**: Electrical noise or a compromised ESP32-C3 attempts to over-dispense food or crash the motor controller coprocessor.

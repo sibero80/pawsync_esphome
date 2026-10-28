@@ -202,18 +202,28 @@ async def test_update_install_execution():
     mock_dev.sw_version = None
     dev_reg.async_get_device.return_value = mock_dev
 
-    with patch("custom_components.pawsync.update.dr.async_get", return_value=dev_reg), \
-         patch("custom_components.pawsync.update.async_flash_esphome_ota", new_callable=AsyncMock) as mock_flash:
-        mock_flash.return_value = True
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tf:
+        tf.write(b"\x01" + (b"\x00" * 128) + b"\xe9" + (b"\x00" * 1000))
+        dummy_fw = tf.name
 
-        entity = PawSyncFirmwareUpdateEntity(hass, entry)
-        assert entity.installed_version == "1.0.8"
+    try:
+        with patch("custom_components.pawsync.update.dr.async_get", return_value=dev_reg), \
+             patch("custom_components.pawsync.update.async_ensure_firmware_binary", new_callable=AsyncMock, return_value=dummy_fw), \
+             patch("custom_components.pawsync.update.async_flash_esphome_ota", new_callable=AsyncMock) as mock_flash:
+            mock_flash.return_value = True
 
-        await entity.async_install()
+            entity = PawSyncFirmwareUpdateEntity(hass, entry)
+            assert entity.installed_version == "1.0.8"
 
-        assert mock_flash.called
-        assert entity.installed_version == entity.latest_version
-        assert dev_reg.async_update_device.called
+            await entity.async_install()
+
+            assert mock_flash.called
+            assert entity.installed_version == entity.latest_version
+            assert dev_reg.async_update_device.called
+    finally:
+        if os.path.exists(dummy_fw):
+            os.remove(dummy_fw)
 
 
 def test_sanitize_firmware_binary():

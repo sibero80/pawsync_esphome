@@ -40,6 +40,7 @@ from .esphome_provisioner import (
     async_auto_adopt_esphome,
     async_provision_esphome_yaml,
 )
+from .firmware_downloader import async_ensure_firmware_binary
 from .ota_stager import PawsyncOtaStager
 from .pawsync_api import (
     PawsyncApiClient,
@@ -301,17 +302,11 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             # If wireless OTA was chosen, trigger stager and cloud relay
             if self._flash_method == FLASH_METHOD_OTA:
-                # Find bundled or staged firmware binary
-                fw_candidates = [
-                    os.path.join(self.hass.config.config_dir, "pawsync_ota_update.bin"),
-                    "/root/pawsync_esphome/pawsync_ota_update.bin",
-                    os.path.join(os.path.dirname(__file__), "pawsync_ota_update.bin"),
-                ]
                 fw_path = None
-                for path in fw_candidates:
-                    if os.path.exists(path):
-                        fw_path = path
-                        break
+                try:
+                    fw_path = await async_ensure_firmware_binary(self.hass)
+                except Exception as dl_err:
+                    _LOGGER.warning("Could not obtain firmware binary for OTA: %s", dl_err)
 
                 if fw_path and self._cloud_auth.get(CONF_ACCOUNT_ID) and self._cloud_auth.get(CONF_TOKEN):
                     try:

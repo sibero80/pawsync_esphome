@@ -13,17 +13,22 @@ This guide details the firmware architecture and flashing methods available for 
 The easiest method to install ESPHome onto the feeder is through the automated wireless OTA flasher built into the Home Assistant integration.
 
 ### How It Works:
-1. **Local HTTP Stager (`ota_stager.py`)**:
-   - The integration spins up an embedded HTTP server on port 8000.
+1. **Dynamic Binary Retrieval ([`firmware_downloader.py`](file:///root/pawsync_esphome/custom_components/pawsync/firmware_downloader.py))**:
+   - The integration resolves the verified `pawsync_ota_update.bin` container.
+   - If not found locally in `/config/`, it automatically downloads the verified release container on demand from the transparent upstream repository: [**sibero80/pawsync_ota**](https://github.com/sibero80/pawsync_ota).
+   - Offline users can manually place `pawsync_ota_update.bin` directly into `/config/` to bypass internet access.
+2. **Local Ephemeral Stager ([`ota_stager.py`](file:///root/pawsync_esphome/custom_components/pawsync/ota_stager.py))**:
+   - The integration spins up an embedded HTTP server on an ephemeral randomized path (`/firmware_<16-hex>.bin`) with an automated 10-minute self-termination timeout.
    - It serves `pawsync_ota_update.bin`, a packaged ESP32-C3 binary wrapped in a 129-byte encrypted container header required by the factory stock firmware bootloader.
-2. **Paced Transfer**:
+3. **Paced Transfer**:
    - **Chunk 1**: Sends exactly 129 bytes (the header), then pauses for **8.0 seconds** to allow the stock firmware to erase the 1.25 MB `ota_0` partition on SPI Flash.
    - **Subsequent Chunks**: Streams 2048-byte chunks paced at ~100 KB/s (20ms delay per chunk) to ensure stable flash writing without starving the feeder's CPU.
-3. **Cloud Command Relay (`vesync_relay.py`)**:
+4. **Cloud Command Relay ([`vesync_relay.py`](file:///root/pawsync_esphome/custom_components/pawsync/vesync_relay.py))**:
    - Home Assistant sends an authorized `bypassV2` command (`upFirmware`) to the feeder via the cloud API.
-   - The URL is formatted using integer DWORD notation (`http://3232235916:8000/firmware.bin`) for direct compatibility with the feeder's embedded lwIP socket client.
-4. **Adoption**:
+   - The URL is formatted using integer DWORD notation (`http://3232235916:8099/firmware_<token>.bin`) for direct compatibility with the feeder's embedded lwIP socket client.
+5. **Adoption**:
    - Upon completing the download, the feeder validates the MD5 checksum, updates its boot partition, reboots into ESPHome, and connects to your local Home Assistant instance.
+   - Third-party cloud bearer tokens are immediately purged from Home Assistant storage post-adoption.
 
 ---
 

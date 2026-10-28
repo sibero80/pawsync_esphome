@@ -24,6 +24,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import CONF_HOST, CONF_SELECTED_FEEDER, DOMAIN, VERSION, generate_noise_psk
 from .espota_client import async_flash_esphome_ota, sanitize_firmware_binary
 from .esphome_provisioner import resolve_arp_ip
+from .firmware_downloader import async_ensure_firmware_binary
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -193,24 +194,15 @@ class PawSyncFirmwareUpdateEntity(UpdateEntity):
             self.async_write_ha_state()
             raise HomeAssistantError("Could not resolve IP address of the Pawsync feeder.")
 
-        # 2. Locate and load the firmware binary
-        search_dirs = [
-            os.path.dirname(__file__),
-            os.path.join(self.hass.config.config_dir, "custom_components/pawsync"),
-            self.hass.config.config_dir,
-            "/root/pawsync_esphome/custom_components/pawsync",
-        ]
-        firmware_path = None
-        for d in search_dirs:
-            candidate = os.path.join(d, "pawsync_ota_update.bin")
-            if os.path.exists(candidate):
-                firmware_path = candidate
-                break
-
-        if not firmware_path:
+        # 2. Locate or dynamically download the firmware binary
+        try:
+            firmware_path = await async_ensure_firmware_binary(
+                self.hass, version=self.latest_version
+            )
+        except Exception as err:
             self._attr_in_progress = False
             self.async_write_ha_state()
-            raise HomeAssistantError("Firmware binary pawsync_ota_update.bin not found.")
+            raise HomeAssistantError(f"Could not obtain firmware binary: {err}") from err
 
         try:
             def _read_bin():
