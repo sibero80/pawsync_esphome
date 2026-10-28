@@ -6,6 +6,10 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
+import re
+import shutil
+import subprocess
 import time
 import uuid
 from typing import Any
@@ -41,22 +45,93 @@ def generate_trace_id() -> str:
     return f"PET{rand_suffix}{millis}-00001"
 
 
-def resolve_ip_from_mac(mac: str) -> str:
-    """Resolve local IP address from MAC address using Linux ARP cache."""
+def resolve_ip_from_mac(mac: str, hass: Any = None) -> str:
+    """Resolve local IP address from MAC address using multi-tiered discovery:
+
+    1. Home Assistant active entries and pending discovery flows (if hass provided)
+    2. Linux /proc/net/arp cache
+    3. System neighbor CLI tools (ip neigh / arp) for containerized or non-Linux hosts
+    """
     if not mac:
         return ""
     clean_target = mac.replace(":", "").replace("-", "").strip().lower()
+
+    # 1. Tier 1: Check Home Assistant context
+    if hass is not None:
+        try:
+            if hasattr(hass, "config_entries") and hasattr(hass.config_entries, "async_entries"):
+                for entry in hass.config_entries.async_entries("esphome"):
+                    entry_uid = (getattr(entry, "unique_id", None) or "").replace(":", "").replace("-", "").strip().lower()
+                    if entry_uid and entry_uid == clean_target:
+                        ip = entry.data.get("host")
+                        if ip and ip != "0.0.0.0":
+                            return str(ip)
+            if hasattr(hass, "config_entries") and hasattr(hass.config_entries, "flow"):
+                flows = hass.config_entries.flow.async_progress_by_handler("esphome")
+                for flow in flows:
+                    ctx = flow.get("context", {})
+                    flow_uid = (ctx.get("unique_id") or "").replace(":", "").replace("-", "").strip().lower()
+                    if flow_uid and flow_uid == clean_target:
+                        placeholders = ctx.get("title_placeholders", {})
+                        ip = placeholders.get("ip") or flow.get("data", {}).get("host")
+                        if ip and ip != "0.0.0.0":
+                            return str(ip)
+        except Exception as err:
+            _LOGGER.debug("Could not inspect Home Assistant context for MAC %s: %s", mac, err)
+
+    # 2. Tier 2: Check /proc/net/arp (fastest on Linux)
     try:
-        with open("/proc/net/arp", "r", encoding="utf-8") as f:
-            for line in f:
+        if os.path.exists("/proc/net/arp"):
+            with open("/proc/net/arp", "r", encoding="utf-8") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        ip_candidate = parts[0]
+                        arp_mac = parts[3].replace(":", "").replace("-", "").strip().lower()
+                        if arp_mac == clean_target and ip_candidate != "0.0.0.0":
+                            return ip_candidate
+    except Exception as err:
+        _LOGGER.debug("Could not read /proc/net/arp: %s", err)
+
+    # 3. Tier 3: CLI neighbor lookup (ip neigh or arp) for containers / macOS / BSD
+    try:
+        ip_cmd = shutil.which("ip")
+        if ip_cmd:
+            res = subprocess.run(
+                [ip_cmd, "-4", "neigh", "show"],
+                capture_output=True,
+                text=True,
+                timeout=1.5,
+            )
+            for line in res.stdout.splitlines():
                 parts = line.split()
-                if len(parts) >= 4:
+                if len(parts) >= 5 and parts[3].lower() == "lladdr":
                     ip_candidate = parts[0]
-                    arp_mac = parts[3].replace(":", "").replace("-", "").strip().lower()
+                    neigh_mac = parts[4].replace(":", "").replace("-", "").strip().lower()
+                    if neigh_mac == clean_target and ip_candidate != "0.0.0.0":
+                        return ip_candidate
+    except Exception as err:
+        _LOGGER.debug("Could not query 'ip neigh': %s", err)
+
+    try:
+        arp_cmd = shutil.which("arp")
+        if arp_cmd:
+            res = subprocess.run(
+                [arp_cmd, "-an"],
+                capture_output=True,
+                text=True,
+                timeout=1.5,
+            )
+            for line in res.stdout.splitlines():
+                match = re.search(r"\(([\d\.]+)\)\s+at\s+([0-9a-fA-F:]{17}|[0-9a-fA-F-]{17})", line)
+                if match:
+                    ip_candidate = match.group(1)
+                    arp_mac = match.group(2).replace(":", "").replace("-", "").strip().lower()
                     if arp_mac == clean_target and ip_candidate != "0.0.0.0":
                         return ip_candidate
     except Exception as err:
-        _LOGGER.debug("Could not read /proc/net/arp: %s", err)
+        _LOGGER.debug("Could not query 'arp': %s", err)
+
     return ""
 
 

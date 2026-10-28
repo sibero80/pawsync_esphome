@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 128" width="512" height="128">
+  <defs>
+    <linearGradient id="pawGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F59E0B" />
+      <stop offset="100%" stop-color="#D97706" />
+    </linearGradient>
+  </defs>
+  <!-- Left Icon -->
+  <g transform="translate(8, 8) scale(0.4375)">
+    <rect width="256" height="256" rx="56" fill="url(#pawGrad)" />
+    <!-- Sync Waves -->
+    <path d="M 88 78 A 48 48 0 0 1 168 78" fill="none" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" />
+    <path d="M 104 94 A 28 28 0 0 1 152 94" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" />
+    <circle cx="128" cy="106" r="4.5" fill="#FFFFFF" />
+    <!-- Bowl Base -->
+    <path d="M 44 130 C 44 130 52 206 128 206 C 204 206 212 130 212 130 Z" fill="#FFFFFF" />
+    <rect x="36" y="122" width="184" height="16" rx="8" fill="#FFFFFF" />
+    <!-- Paw Print Inside Bowl -->
+    <ellipse cx="128" cy="172" rx="22" ry="16" fill="#D97706" />
+    <circle cx="106" cy="148" r="7" fill="#D97706" />
+    <circle cx="120" cy="142" r="7.5" fill="#D97706" />
+    <circle cx="136" cy="142" r="7.5" fill="#D97706" />
+    <circle cx="150" cy="148" r="7" fill="#D97706" />
+  </g>
+  <!-- Brand Typography -->
+  <text x="136" y="74" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="52" font-weight="800" fill="#1E293B">Paw<tspan fill="#F59E0B">Sync</tspan></text>
+  <text x="138" y="102" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#64748B" letter-spacing="1.5">SMART PET FEEDER</text>
+</svg>

@@ -121,3 +121,81 @@ async def test_async_login_auth_error():
     client = PawsyncApiClient(session=mock_session)
     with pytest.raises(PawsyncAuthError):
         await client.async_login("user@example.com", "WrongPassword")
+
+
+def test_resolve_ip_from_mac_ha_entries():
+    """Test IP resolution from active Home Assistant ESPHome entries."""
+    from custom_components.pawsync.pawsync_api import resolve_ip_from_mac
+
+    hass = MagicMock()
+    entry = MagicMock()
+    entry.unique_id = "AA:BB:CC:DD:EE:FF"
+    entry.data = {"host": "192.168.1.120"}
+    hass.config_entries.async_entries.return_value = [entry]
+
+    ip = resolve_ip_from_mac("aabbccddeeff", hass=hass)
+    assert ip == "192.168.1.120"
+
+
+def test_resolve_ip_from_mac_ha_flows():
+    """Test IP resolution from pending ESPHome discovery flows."""
+    from custom_components.pawsync.pawsync_api import resolve_ip_from_mac
+
+    hass = MagicMock()
+    hass.config_entries.async_entries.return_value = []
+    flow = {
+        "flow_id": "flow123",
+        "context": {
+            "unique_id": "11:22:33:44:55:66",
+            "title_placeholders": {"ip": "192.168.1.130"},
+        },
+    }
+    hass.config_entries.flow.async_progress_by_handler.return_value = [flow]
+
+    ip = resolve_ip_from_mac("11:22:33:44:55:66", hass=hass)
+    assert ip == "192.168.1.130"
+
+
+def test_resolve_ip_from_mac_proc_arp(monkeypatch):
+    """Test IP resolution from /proc/net/arp."""
+    from custom_components.pawsync.pawsync_api import resolve_ip_from_mac
+    from unittest.mock import mock_open
+
+    arp_content = (
+        "IP address       HW type     Flags       HW address            Mask     Device\n"
+        "192.168.1.1      0x1         0x2         00:11:22:33:44:55     *        eth0\n"
+        "192.168.1.140    0x1         0x2         10:97:bd:4c:18:d8     *        eth0\n"
+    )
+
+    with patch("os.path.exists", return_value=True), patch("builtins.open", mock_open(read_data=arp_content)):
+        ip = resolve_ip_from_mac("10:97:bd:4c:18:d8")
+        assert ip == "192.168.1.140"
+
+
+def test_resolve_ip_from_mac_ip_neigh(monkeypatch):
+    """Test fallback IP resolution using 'ip neigh' CLI command."""
+    from custom_components.pawsync.pawsync_api import resolve_ip_from_mac
+    import subprocess
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = "192.168.1.150 dev eth0 lladdr 22:33:44:55:66:77 REACHABLE\n"
+
+    with patch("os.path.exists", return_value=False), \
+         patch("shutil.which", side_effect=lambda cmd: "/sbin/ip" if cmd == "ip" else None), \
+         patch("subprocess.run", return_value=mock_proc):
+        ip = resolve_ip_from_mac("22:33:44:55:66:77")
+        assert ip == "192.168.1.150"
+
+
+def test_resolve_ip_from_mac_arp_cli(monkeypatch):
+    """Test fallback IP resolution using 'arp -an' CLI command."""
+    from custom_components.pawsync.pawsync_api import resolve_ip_from_mac
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = "? (192.168.1.160) at 33:44:55:66:77:88 [ether] on eth0\n"
+
+    with patch("os.path.exists", return_value=False), \
+         patch("shutil.which", side_effect=lambda cmd: "/usr/sbin/arp" if cmd == "arp" else None), \
+         patch("subprocess.run", return_value=mock_proc):
+        ip = resolve_ip_from_mac("33:44:55:66:77:88")
+        assert ip == "192.168.1.160"

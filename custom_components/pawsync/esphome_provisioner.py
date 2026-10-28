@@ -9,6 +9,7 @@ import re
 from typing import Any
 
 from .const import generate_noise_psk, generate_ota_password
+from .pawsync_api import resolve_ip_from_mac
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -111,23 +112,9 @@ async def async_provision_esphome_yaml(
         return None
 
 
-def resolve_arp_ip(mac: str) -> str:
-    """Resolve IP address from MAC using Linux ARP cache."""
-    if not mac:
-        return ""
-    target_clean = mac.replace(":", "").replace("-", "").strip().lower()
-    try:
-        with open("/proc/net/arp", "r", encoding="utf-8") as f:
-            for line in f:
-                parts = line.split()
-                if len(parts) >= 4:
-                    arp_ip = parts[0]
-                    arp_mac = parts[3].replace(":", "").replace("-", "").strip().lower()
-                    if arp_mac == target_clean and arp_ip != "0.0.0.0":
-                        return arp_ip
-    except Exception:
-        pass
-    return ""
+def resolve_arp_ip(mac: str, hass: Any = None) -> str:
+    """Resolve IP address from MAC using portable multi-tiered resolution."""
+    return resolve_ip_from_mac(mac, hass=hass)
 
 
 def _is_flow_type(res: dict[str, Any] | None, *types: str) -> bool:
@@ -220,9 +207,9 @@ async def async_auto_adopt_esphome(
     for attempt in range(1, max_attempts + 1):
         # Dynamically resolve IP if missing or stale
         if not host and mac:
-            host = resolve_arp_ip(mac)
+            host = resolve_arp_ip(mac, hass=hass)
             if host:
-                _LOGGER.info("Dynamically resolved feeder IP from ARP: %s", host)
+                _LOGGER.info("Dynamically resolved feeder IP from discovery: %s", host)
 
         # 1. Check if ESPHome config entry already exists
         try:

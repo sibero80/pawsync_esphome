@@ -105,3 +105,56 @@ async def test_cloud_onboarding_full_flow():
     assert res5["data"].get("token") is None
     assert "noise_psk" in res5["description_placeholders"]
     assert len(res5["description_placeholders"]["noise_psk"]) == 44
+
+
+@pytest.mark.asyncio
+async def test_options_flow():
+    """Test options flow initialization and update."""
+    from custom_components.pawsync.config_flow import PawsyncOptionsFlowHandler
+    from custom_components.pawsync.const import CONF_UNIT_SYSTEM, UNIT_SYSTEM_IMPERIAL, UNIT_SYSTEM_METRIC
+
+    mock_entry = MagicMock()
+    mock_entry.data = {
+        CONF_UNIT_SYSTEM: UNIT_SYSTEM_METRIC,
+        CONF_HOST: "192.168.1.50",
+    }
+    mock_entry.options = {}
+
+    options_flow = PawsyncOptionsFlowHandler(mock_entry)
+    options_flow.hass = MagicMock()
+    options_flow.hass.config.units.is_metric = True
+
+    # 1. Show form
+    form = await options_flow.async_step_init()
+    assert form["type"] == "form"
+    assert form["step_id"] == "init"
+
+    # 2. Submit changes
+    res = await options_flow.async_step_init({
+        CONF_UNIT_SYSTEM: UNIT_SYSTEM_IMPERIAL,
+        CONF_HOST: "192.168.1.99",
+        "stager_port": 8100,
+    })
+    assert res["type"] == "create_entry"
+    assert res["data"][CONF_UNIT_SYSTEM] == UNIT_SYSTEM_IMPERIAL
+    assert res["data"][CONF_HOST] == "192.168.1.99"
+    assert res["data"]["stager_port"] == 8100
+
+
+@pytest.mark.asyncio
+async def test_prerequisites_manual_ip_input():
+    """Test entering a manual IP override during prerequisites."""
+    from custom_components.pawsync.const import CONF_SSID, CONF_WIFI_PASSWORD
+
+    flow = PawsyncConfigFlow()
+    flow.hass = MagicMock()
+    flow._selected_feeder_info = {"name": "Test Feeder", "mac": "11:22:33:44:55:66"}
+
+    res = await flow.async_step_prerequisites({
+        CONF_SSID: "TestWiFi",
+        CONF_WIFI_PASSWORD: "Password123",
+        CONF_HOST: "192.168.1.77",
+    })
+    assert res["type"] == "form"
+    assert res["step_id"] == "flash_wizard"
+    assert flow._selected_feeder_info["ip"] == "192.168.1.77"

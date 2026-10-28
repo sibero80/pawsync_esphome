@@ -6,10 +6,10 @@ substitutions:
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
-  comment: "Local ESPHome firmware for Pawsync PPF-R361S Pet Feeder with On-Device 7-Plan Scheduler (v1.1.3)"
+  comment: "Local ESPHome firmware for Pawsync PPF-R361S Pet Feeder with On-Device 7-Plan Scheduler (v1.2.0)"
   project:
     name: "sibero80.pawsync_esphome"
-    version: "1.1.3"
+    version: "1.2.0"
   min_version: 2024.6.0
   on_boot:
     - priority: -100.0

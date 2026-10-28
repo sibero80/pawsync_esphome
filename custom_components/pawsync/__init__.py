@@ -50,7 +50,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     cid = entry.data.get(CONF_SELECTED_FEEDER) or entry.title
     name = feeder_info.get("name") or entry.title
     model = feeder_info.get("model") or "PPF-R361S"
-    host = entry.data.get(CONF_HOST) or feeder_info.get("ip")
+    host = entry.options.get(CONF_HOST) or entry.data.get(CONF_HOST) or feeder_info.get("ip")
 
     # 1. Register device in Home Assistant's Device Registry under PawSync
     try:
@@ -77,9 +77,41 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception as dev_err:
         _LOGGER.warning("Could not register device in Device Registry: %s", dev_err)
 
-    # 2. Trigger automated ESPHome background adoption if host is known
+    # 2. Check for deprecated legacy default PSK and manage Home Assistant Repairs issue
+    device_noise_psk = entry.options.get("noise_psk") or entry.data.get("noise_psk")
+    LEGACY_DEFAULT_PSK = "2M4yBDYqWbBDSl3PIkccw2IkCUj5WIySqP8JHYVG7Mc="
+    if device_noise_psk == LEGACY_DEFAULT_PSK:
+        _LOGGER.warning(
+            "Feeder %s is configured with the deprecated legacy default Noise PSK",
+            name,
+        )
+        try:
+            from homeassistant.helpers import issue_registry as ir
+            ir.async_create_issue(
+                hass,
+                domain=DOMAIN,
+                issue_id=f"legacy_noise_psk_{entry.entry_id}",
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="legacy_noise_psk",
+                translation_placeholders={"feeder_name": name},
+                learn_more_url="https://github.com/sibero80/pawsync_esphome/blob/main/SECURITY.md",
+            )
+        except Exception as issue_err:
+            _LOGGER.debug("Could not create repairs issue: %s", issue_err)
+    else:
+        try:
+            from homeassistant.helpers import issue_registry as ir
+            ir.async_delete_issue(
+                hass,
+                domain=DOMAIN,
+                issue_id=f"legacy_noise_psk_{entry.entry_id}",
+            )
+        except Exception:
+            pass
+
+    # 3. Trigger automated ESPHome background adoption if host is known
     if host:
-        device_noise_psk = entry.data.get("noise_psk")
         if not device_noise_psk:
             device_noise_psk = generate_noise_psk()
             hass.config_entries.async_update_entry(
@@ -96,10 +128,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
         )
 
-    # 3. Forward setup to platforms (e.g. Firmware Update entity)
+    # 4. Forward setup to platforms (e.g. Firmware Update entity)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # 4. Reload entry on options update (e.g. unit system switch)
+    # 5. Reload entry on options update (e.g. unit system switch or IP change)
     entry.async_on_unload(entry.add_update_listener(async_update_options))
 
     _LOGGER.info("Loaded PawSync config entry for %s", entry.title)

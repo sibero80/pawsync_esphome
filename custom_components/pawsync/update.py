@@ -176,9 +176,9 @@ class PawSyncFirmwareUpdateEntity(UpdateEntity):
         self.async_write_ha_state()
 
         # 1. Resolve target host IP
-        host = self._host or self._entry.data.get(CONF_HOST)
+        host = self._host or self._entry.options.get(CONF_HOST) or self._entry.data.get(CONF_HOST)
         if not host and self._mac:
-            host = resolve_arp_ip(self._mac)
+            host = resolve_arp_ip(self._mac, hass=self.hass)
 
         if not host:
             clean_mac = (self._mac or "").replace(":", "").replace("-", "").strip().lower()

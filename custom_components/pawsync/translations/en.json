@@ -74,9 +74,17 @@
         "title": "PawSync Integration Options",
         "description": "Configure preferences for your PawSync Smart Pet Feeder.",
         "data": {
-          "unit_system": "Preferred Unit System"
+          "unit_system": "Preferred Unit System",
+          "host": "Device IP Address or Hostname Override",
+          "stager_port": "Local OTA Stager Port (Default: 8099)"
         }
       }
+    }
+  },
+  "issues": {
+    "legacy_noise_psk": {
+      "title": "Legacy Shared Noise Encryption PSK Detected",
+      "description": "Feeder '{feeder_name}' is configured using the deprecated legacy shared Noise PSK. To ensure local network security and prevent unauthorized access, generate a unique encryption key and apply a local firmware update."
     }
   }
 }

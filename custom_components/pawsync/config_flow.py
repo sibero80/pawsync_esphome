@@ -187,9 +187,9 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         device_options: dict[str, str] = {}
         for dev in self._discovered_devices:
-            # Refresh local IP via ARP if not populated from cloud
+            # Refresh local IP via multi-tiered discovery if not populated from cloud
             mac_str = dev.get("mac", "").strip()
-            ip_str = dev.get("ip", "").strip() or resolve_ip_from_mac(mac_str)
+            ip_str = dev.get("ip", "").strip() or resolve_ip_from_mac(mac_str, hass=self.hass)
             if ip_str:
                 dev["ip"] = ip_str
 
@@ -231,16 +231,29 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         is_metric = getattr(self.hass.config.units, "is_metric", True) if hasattr(self.hass.config, "units") else True
         default_unit = UNIT_SYSTEM_METRIC if is_metric else UNIT_SYSTEM_IMPERIAL
 
+        # Attempt dynamic IP resolution if not yet discovered
+        current_ip = self._selected_feeder_info.get("ip") or ""
+        if not current_ip and self._selected_feeder_info.get("mac"):
+            current_ip = resolve_ip_from_mac(self._selected_feeder_info["mac"], hass=self.hass)
+            if current_ip:
+                self._selected_feeder_info["ip"] = current_ip
+
         if user_input is not None:
             self._wifi_ssid = user_input.get(CONF_SSID, "")
             self._wifi_password = user_input.get(CONF_WIFI_PASSWORD, "")
             self._unit_system = user_input.get(CONF_UNIT_SYSTEM, default_unit)
+            if user_input.get(CONF_HOST):
+                self._selected_feeder_info["ip"] = user_input[CONF_HOST].strip()
             return await self.async_step_flash_wizard()
 
         data_schema = vol.Schema(
             {
                 vol.Optional(CONF_SSID, default=self._wifi_ssid): str,
                 vol.Optional(CONF_WIFI_PASSWORD, default=""): str,
+                vol.Optional(
+                    CONF_HOST,
+                    default=self._selected_feeder_info.get("ip") or "",
+                ): str,
                 vol.Required(CONF_UNIT_SYSTEM, default=default_unit): vol.In(
                     {
                         UNIT_SYSTEM_METRIC: "Metric (Grams, Liters)",
@@ -324,7 +337,7 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # Trigger background ESPHome auto-adoption
             local_ip = self._selected_feeder_info.get("ip") or ""
             if not local_ip and mac_address:
-                local_ip = resolve_ip_from_mac(mac_address)
+                local_ip = resolve_ip_from_mac(mac_address, hass=self.hass)
 
             device_noise_psk = self._selected_feeder_info.get("noise_psk") or generate_noise_psk()
 
@@ -470,6 +483,11 @@ class PawsyncOptionsFlowHandler(config_entries.OptionsFlow):
             CONF_UNIT_SYSTEM,
             self.config_entry.data.get(CONF_UNIT_SYSTEM, UNIT_SYSTEM_METRIC if is_metric else UNIT_SYSTEM_IMPERIAL),
         )
+        current_host = self.config_entry.options.get(
+            CONF_HOST,
+            self.config_entry.data.get(CONF_HOST, ""),
+        )
+        current_port = self.config_entry.options.get("stager_port", 8099)
 
         data_schema = vol.Schema(
             {
@@ -478,6 +496,10 @@ class PawsyncOptionsFlowHandler(config_entries.OptionsFlow):
                         UNIT_SYSTEM_METRIC: "Metric (Grams, Liters)",
                         UNIT_SYSTEM_IMPERIAL: "Imperial (Ounces, Cups)",
                     }
+                ),
+                vol.Optional(CONF_HOST, default=current_host): str,
+                vol.Optional("stager_port", default=current_port): vol.All(
+                    vol.Coerce(int), vol.Range(min=1024, max=65535)
                 ),
             }
         )

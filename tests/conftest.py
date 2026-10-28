@@ -30,6 +30,27 @@ if "homeassistant" not in sys.modules:
             }
 
     config_entries.ConfigFlow = ConfigFlow
+
+    class OptionsFlow:
+        def __init__(self, config_entry=None):
+            self.config_entry = config_entry
+
+        def async_show_form(self, step_id, data_schema=None, errors=None, description_placeholders=None):
+            return {
+                "type": "form",
+                "step_id": step_id,
+                "data_schema": data_schema,
+                "errors": errors or {},
+            }
+
+        def async_create_entry(self, title, data):
+            return {
+                "type": "create_entry",
+                "title": title,
+                "data": data,
+            }
+
+    config_entries.OptionsFlow = OptionsFlow
     ha.config_entries = config_entries
 
     core = MagicMock()
@@ -59,6 +80,16 @@ if "homeassistant" not in sys.modules:
     sys.modules["homeassistant.components"] = MagicMock()
     sys.modules["homeassistant.components.frontend"] = MagicMock()
     sys.modules["homeassistant.components.http"] = MagicMock()
+
+    class IssueSeverity:
+        CRITICAL = "critical"
+        ERROR = "error"
+        WARNING = "warning"
+
+    issue_registry = MagicMock()
+    issue_registry.IssueSeverity = IssueSeverity
+    helpers.issue_registry = issue_registry
+    sys.modules["homeassistant.helpers.issue_registry"] = issue_registry
 
     class HomeAssistantError(Exception):
         pass
