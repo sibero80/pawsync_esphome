@@ -75,7 +75,8 @@ async def async_provision_esphome_yaml(
     wifi_ssid: str = "",
     wifi_password: str = "",
     mac_address: str = "",
-    noise_psk: str = DEFAULT_NOISE_PSK,
+    noise_psk: str | None = None,
+    ota_password: str | None = None,
 ) -> str | None:
     """Write the generated YAML file to Home Assistant's /config/esphome/ directory."""
     target_dir = os.path.join(hass_config_dir, "esphome")
@@ -93,6 +94,7 @@ async def async_provision_esphome_yaml(
         wifi_password=wifi_password,
         mac_address=mac_address,
         noise_psk=noise_psk,
+        ota_password=ota_password,
     )
 
     try:

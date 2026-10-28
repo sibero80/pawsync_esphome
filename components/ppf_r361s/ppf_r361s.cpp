@@ -15,9 +15,6 @@ static const char *const TAG = "ppf_r361s";
 
 void PPFR361SComponent::setup() {
   ESP_LOGCONFIG(TAG, "Setting up Pawsync PPF-R361S Dual-MCU UART Bridge...");
-#if defined(USE_ESP_IDF)
-  esp_ota_mark_app_valid_cancel_rollback();
-#endif
   this->rx_buffer_.reserve(256);
 
   // Load persistent schedules from NVS

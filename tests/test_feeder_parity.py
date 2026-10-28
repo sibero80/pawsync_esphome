@@ -16,17 +16,32 @@ import sys
 import time
 import json
 import requests
+import pytest
 
 HA_URL = os.environ.get("HA_URL", "http://192.168.1.140:8123")
-HA_TOKEN = os.environ.get(
-    "HA_TOKEN",
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiI2NTJiMzI0MmY5NmM0ZDMyYjE0MjQ5NGRkNjJkZDZlOCIsImlhdCI6MTc5Mjg3ODIxNSwiZXhwIjoyMTA4MjM4MjE1fQ.NzOPHL9R3SZUDGlmzgOGa0iDcUW91QYqQEnHfnpm4dc"
-)
+HA_TOKEN = os.environ.get("HA_TOKEN", "")
 
 HEADERS = {
     "Authorization": f"Bearer {HA_TOKEN}",
     "Content-Type": "application/json"
 }
+
+
+def _is_ha_available() -> bool:
+    """Check if live Home Assistant instance is reachable with authorized token."""
+    if not HA_TOKEN:
+        return False
+    try:
+        r = requests.get(f"{HA_URL}/api/", headers=HEADERS, timeout=2)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+pytestmark = pytest.mark.skipif(
+    not _is_ha_available(),
+    reason="Live Home Assistant instance unreachable or HA_TOKEN environment variable not set"
+)
 
 
 def get_entity_state(entity_id: str, max_retries: int = 5, retry_delay: float = 2.0):

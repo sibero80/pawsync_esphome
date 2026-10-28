@@ -270,6 +270,8 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             feeder_name = self._selected_feeder_info.get("name", "Pawsync Feeder")
             mac_address = self._selected_feeder_info.get("mac", "")
             cid = self._selected_feeder_cid
+            device_noise_psk = self._selected_feeder_info.get("noise_psk") or generate_noise_psk()
+            self._selected_feeder_info["noise_psk"] = device_noise_psk
 
             # Automatically provision /config/esphome/ YAML
             try:
@@ -280,6 +282,7 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     wifi_ssid=self._wifi_ssid,
                     wifi_password=self._wifi_password,
                     mac_address=mac_address,
+                    noise_psk=device_noise_psk,
                 )
             except Exception as err:
                 _LOGGER.warning("Could not auto-provision ESPHome YAML: %s", err)
