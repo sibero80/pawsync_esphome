@@ -84,7 +84,7 @@
   "issues": {
     "legacy_noise_psk": {
       "title": "Legacy Shared Noise Encryption PSK Detected",
-      "description": "Feeder '{feeder_name}' is configured using the deprecated legacy shared Noise PSK. To ensure local network security and prevent unauthorized access, generate a unique encryption key and apply a local firmware update."
+      "description": "Feeder {feeder_name} is configured using the deprecated legacy shared Noise PSK. To ensure local network security and prevent unauthorized access, generate a unique encryption key and apply a local firmware update."
     }
   }
 }
