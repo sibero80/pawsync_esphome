@@ -13,9 +13,22 @@ __pycache__/
 secrets.yaml
 .env
 
+# Flash dumps and binary backups containing hardware/WiFi secrets
+*.dump
+dumps/
+esp32c3_dump.bin
+stock_factory_*.bin
+pawsync_factory_*.bin
+pawsync_ota_update.bin
+*.bin.bak
+
 # Editor and OS
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
 *.log
+.esphome/
+.omg/
+work/
+staging/

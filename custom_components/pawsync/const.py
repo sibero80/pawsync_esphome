@@ -54,4 +54,19 @@ MAX_FIRMWARE_SIZE = 1310720  # 1.25 MB (0x140000)
 # Default Defaults
 DEFAULT_COUNTRY_CODE = "US"
 DEFAULT_TIME_ZONE = "America/New_York"
+# Legacy fallback key for existing v1.0.8/v1.1.1 installations
 DEFAULT_NOISE_PSK = "2M4yBDYqWbBDSl3PIkccw2IkCUj5WIySqP8JHYVG7Mc="
+
+
+def generate_noise_psk() -> str:
+    """Generate a unique cryptographically secure 32-byte base64 Noise PSK."""
+    import base64
+    import secrets
+    return base64.b64encode(secrets.token_bytes(32)).decode("ascii")
+
+
+def generate_ota_password() -> str:
+    """Generate a secure random OTA password for new device installations."""
+    import secrets
+    return secrets.token_urlsafe(16)
+

@@ -33,6 +33,7 @@ from .const import (
     FLASH_METHOD_WEBSERIAL,
     MODE_CLOUD_ONBOARDING,
     MODE_DIRECT_ESPHOME,
+    generate_noise_psk,
     UNIT_SYSTEM_IMPERIAL,
     UNIT_SYSTEM_METRIC,
 )
@@ -323,11 +324,13 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not local_ip and mac_address:
                 local_ip = resolve_ip_from_mac(mac_address)
 
+            device_noise_psk = self._selected_feeder_info.get("noise_psk") or generate_noise_psk()
+
             self.hass.async_create_task(
                 async_auto_adopt_esphome(
                     self.hass,
                     host=local_ip or "",
-                    noise_psk=DEFAULT_NOISE_PSK,
+                    noise_psk=device_noise_psk,
                     mac=mac_address,
                     feeder_name=feeder_name,
                 )
@@ -341,6 +344,7 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_TOKEN: self._cloud_auth.get(CONF_TOKEN),
                 CONF_SELECTED_FEEDER: cid,
                 "feeder_info": self._selected_feeder_info,
+                "noise_psk": device_noise_psk,
                 CONF_FLASH_METHOD: self._flash_method,
                 CONF_SSID: self._wifi_ssid,
                 CONF_HOST: local_ip,
@@ -353,7 +357,7 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 description_placeholders={
                     "feeder_name": feeder_name,
                     "ip": local_ip or "Discovered IP",
-                    "noise_psk": DEFAULT_NOISE_PSK,
+                    "noise_psk": device_noise_psk,
                 },
             )
 
@@ -390,12 +394,13 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             name = user_input.get("name", "Pawsync Feeder").strip()
             host = user_input[CONF_HOST].strip()
             unit_system = user_input.get(CONF_UNIT_SYSTEM, default_unit)
+            device_noise_psk = generate_noise_psk()
 
             self.hass.async_create_task(
                 async_auto_adopt_esphome(
                     self.hass,
                     host=host,
-                    noise_psk=DEFAULT_NOISE_PSK,
+                    noise_psk=device_noise_psk,
                     feeder_name=name,
                 )
             )
@@ -406,12 +411,13 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_ONBOARDING_MODE: MODE_DIRECT_ESPHOME,
                     CONF_HOST: host,
                     CONF_UNIT_SYSTEM: unit_system,
+                    "noise_psk": device_noise_psk,
                     "name": name,
                 },
                 description_placeholders={
                     "feeder_name": name,
                     "ip": host,
-                    "noise_psk": DEFAULT_NOISE_PSK,
+                    "noise_psk": device_noise_psk,
                 },
             )
 

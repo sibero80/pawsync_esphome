@@ -1,6 +1,7 @@
 substitutions:
   name: "pawsync-feeder"
   friendly_name: "Pawsync PPF-R361S Feeder"
+  timezone: "America/New_York"
 
 esphome:
   name: ${name}
@@ -11,12 +12,6 @@ esphome:
     version: "1.1.1"
   min_version: 2024.6.0
   on_boot:
-    - priority: 2000.0
-      then:
-        - lambda: |-
-            #if defined(USE_ESP_IDF)
-            esp_ota_mark_app_valid_cancel_rollback();
-            #endif
     - priority: -100.0
       then:
         - lambda: |-
@@ -48,10 +43,11 @@ external_components:
       path: components
 
 logger:
-  level: DEBUG
+  level: INFO
   baud_rate: 0  # Disable logger UART to prevent interference with SC95F8766P link
 
 api:
+  reboot_timeout: 0s
   encryption:
     key: !secret api_encryption_key
   services:
@@ -65,6 +61,10 @@ api:
           example: "1"
       then:
         - lambda: |-
+            if (portions < 1 || portions > 20) {
+              ESP_LOGW("service", "feed rejected: portions %d out of range (1-20)", portions);
+              return;
+            }
             id(feeder_bridge).feed(portions, true);
 
     # Service: Trigger stock single-meal kibble density calibration (opcode 0x5599)
@@ -108,8 +108,20 @@ api:
           example: "true"
       then:
         - lambda: |-
+            if (plan < 0 || plan > 7) {
+              ESP_LOGW("schedule", "set_meal_schedule rejected: plan %d out of range (0-7)", plan);
+              return;
+            }
+            if (meal < 1 || meal > 10) {
+              ESP_LOGW("schedule", "set_meal_schedule rejected: meal %d out of range (1-10)", meal);
+              return;
+            }
+            if (portions < 1 || portions > 20) {
+              ESP_LOGW("schedule", "set_meal_schedule rejected: portions %d out of range (1-20)", portions);
+              return;
+            }
             uint8_t p = (plan >= 1 && plan <= 7) ? (plan - 1) : id(feeder_bridge).get_active_plan();
-            uint8_t m = (meal >= 1 && meal <= 10) ? (meal - 1) : 0;
+            uint8_t m = meal - 1;
 
             uint8_t h = 0, min = 0;
             if (enabled && !id(feeder_bridge).parse_time_string(meal_time, h, min)) {
@@ -130,25 +142,41 @@ api:
           example: "1"
       then:
         - lambda: |-
+            if (plan < 0 || plan > 7) {
+              ESP_LOGW("schedule", "clear_plan rejected: plan %d out of range (0-7)", plan);
+              return;
+            }
             uint8_t p = (plan >= 1 && plan <= 7) ? (plan - 1) : id(feeder_bridge).get_active_plan();
             id(feeder_bridge).clear_plan(p);
 
 ota:
   - platform: esphome
+    password: !secret ota_password
 
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
   ap:
     ssid: "Pawsync-Feeder-Fallback"
-    password: "fallbackpassword"
+    password: !secret wifi_ap_password
 
 captive_portal:
 
 time:
   - platform: homeassistant
+    id: ha_time
+    timezone: ${timezone}
+    on_time_sync:
+      then:
+        - ppf_r361s.sync_clock:
+            id: feeder_bridge
+  - platform: sntp
     id: sntp_time
-    timezone: "America/Bogota"
+    timezone: ${timezone}
+    servers:
+      - 0.pool.ntp.org
+      - 1.pool.ntp.org
+      - time.google.com
     on_time_sync:
       then:
         - ppf_r361s.sync_clock:
@@ -227,6 +255,7 @@ switch:
     id: sw_unlock_factory_rollback
     icon: mdi:lock-alert
     entity_category: config
+    restore_mode: ALWAYS_OFF
     optimistic: true
     turn_on_action:
       - logger.log: "WARNING: Factory firmware rollback interlock has been UNLOCKED!"
@@ -285,6 +314,25 @@ sensor:
       name: "Food Tank Level"
     days_to_empty_tank:
       name: "Days to Empty Tank"
+  - platform: uptime
+    name: "Uptime"
+    id: sensor_uptime
+    entity_category: diagnostic
+    icon: "mdi:timer-outline"
+  - platform: wifi_signal
+    name: "Wi-Fi Signal"
+    id: sensor_wifi_signal
+    update_interval: 60s
+    entity_category: diagnostic
+  - platform: template
+    name: "Free Heap"
+    id: sensor_free_heap
+    unit_of_measurement: "bytes"
+    entity_category: diagnostic
+    icon: "mdi:memory"
+    lambda: |-
+      return (float) esp_get_free_heap_size();
+    update_interval: 60s
 
 binary_sensor:
   - platform: ppf_r361s
@@ -340,8 +388,9 @@ text_sensor:
     id: firmware_version
     entity_category: diagnostic
     icon: "mdi:tag-outline"
+    update_interval: never
     lambda: |-
-      return std::string("1.1.0");
+      return std::string(ESPHOME_PROJECT_VERSION);
 
 button:
   - platform: ppf_r361s

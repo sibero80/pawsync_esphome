@@ -79,11 +79,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # 2. Trigger automated ESPHome background adoption if host is known
     if host:
+        device_noise_psk = entry.data.get("noise_psk") or DEFAULT_NOISE_PSK
         hass.async_create_task(
             async_auto_adopt_esphome(
                 hass=hass,
                 host=host,
-                noise_psk=DEFAULT_NOISE_PSK,
+                noise_psk=device_noise_psk,
                 mac=mac,
                 feeder_name=name,
             )

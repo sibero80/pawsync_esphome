@@ -95,11 +95,12 @@ async def test_cloud_onboarding_full_flow():
     assert res4["step_id"] == "flash_wizard"
 
     # Step 5: Flash wizard (choose skip or manual to complete)
-    with patch("custom_components.pawsync.config_flow.async_auto_adopt_esphome", new_callable=AsyncMock):
+    with patch("custom_components.pawsync.config_flow.async_auto_adopt_esphome", new_callable=MagicMock):
         res5 = await flow.async_step_flash_wizard({
             "flash_method": FLASH_METHOD_SKIP,
         })
     assert res5["type"] == "create_entry"
     assert "Fluffy's Feeder" in res5["title"]
     assert res5["data"][CONF_SELECTED_FEEDER] == "cid_cat_001"
-    assert res5["description_placeholders"]["noise_psk"] == "2M4yBDYqWbBDSl3PIkccw2IkCUj5WIySqP8JHYVG7Mc="
+    assert "noise_psk" in res5["description_placeholders"]
+    assert len(res5["description_placeholders"]["noise_psk"]) == 44

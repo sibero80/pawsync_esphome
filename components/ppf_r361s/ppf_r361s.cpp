@@ -443,6 +443,14 @@ void PPFR361SComponent::handle_opcode_(uint16_t opcode, uint8_t status,
   switch (opcode) {
     case OPCODE_STATUS_POLL:   // 0x5592 - Device Status Query Response
     case OPCODE_STATUS_REPORT: { // 0x5593 - Full Telemetry Status Report
+#if defined(USE_ESP_IDF)
+      static bool ota_app_marked_valid = false;
+      if (!ota_app_marked_valid) {
+        esp_ota_mark_app_valid_cancel_rollback();
+        ota_app_marked_valid = true;
+        ESP_LOGI(TAG, "Hardware health check passed: coprocessor UART active. OTA rollback canceled & app validated.");
+      }
+#endif
       // Key 3: child_lock (0 = Unlocked, 1 = Locked)
       if (klv.count(3) && !klv.at(3).empty()) {
         bool locked = (klv.at(3)[0] != 0);

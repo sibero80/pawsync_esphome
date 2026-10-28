@@ -134,10 +134,16 @@ Locate the labeled test pads adjacent to the ESP32-C3 module on the logic board:
 | Test Pad / Pin | ESP32-C3 Function | USB-to-UART Adapter Pin | Notes |
 | :--- | :--- | :--- | :--- |
 | **`GND`** | Ground | **`GND`** | Common ground reference |
-| **`TX`** | `GPIO21` (MCU TX / Serial) | **`RX`** | Adapter receives from ESP32 |
-| **`RX`** | `GPIO20` (MCU RX / Serial) | **`TX`** | Adapter transmits to ESP32 |
+| **`TX`** | `GPIO21` (UART0 TX / Serial) | **`RX`** | Adapter receives from ESP32 |
+| **`RX`** | `GPIO20` (UART0 RX / Serial) | **`TX`** | Adapter transmits to ESP32 |
 | **`BOOT`** | `GPIO9` (Strapping Pin) | **`GND`** (Temporary) | Hold to GND during power-on for download mode |
 | **`3V3`** | 3.3V VDD | *Leave Disconnected* | **Do NOT connect adapter 3.3V!** |
+
+> [!NOTE]
+> **UART Architecture Disambiguation:**
+> - **UART0 (`GPIO21` TX / `GPIO20` RX)**: Dedicated to the service test pads for serial flashing and ESP-IDF console logs at 115200 baud.
+> - **UART1 (`GPIO19` TX / `GPIO18` RX)**: Dedicated internal serial bus hardwired to the Sinowealth SC95F8766P motor/scale coprocessor at 115200 baud (8N1).
+> - **USB-Serial-JTAG**: Because the ESP32-C3 uses `GPIO18` (D-) and `GPIO19` (D+) for its internal USB-JTAG controller, wiring them to the coprocessor disables native USB-JTAG. Flashing over wire must be performed via the UART0 test pads using a 3.3V USB-to-UART serial adapter.
 
 > [!WARNING]
 > **CRITICAL ELECTRICAL SAFETY RULES:**
@@ -177,16 +183,19 @@ esptool.py --chip esp32c3 -p /dev/ttyUSB0 -b 921600 read_flash 0x0 0x400000 paws
 > - Store this file in a safe location (cloud storage, external drive). This file contains your unit's unique factory calibration, MAC address, and pristine stock firmware.
 
 #### (Optional) Individual Partition Backups
-You can also back up individual partitions:
+You can also back up individual partitions according to `partitions.csv`:
 ```bash
-# Bootloader (0x0 - 0x10000)
-esptool.py --chip esp32c3 -p /dev/ttyUSB0 read_flash 0x0 0x10000 bootloader_backup.bin
+# Bootloader (0x0 - 0x8000)
+esptool.py --chip esp32c3 -p /dev/ttyUSB0 read_flash 0x0 0x8000 bootloader_backup.bin
 
-# Partition Table (0x10000 - 0x11000)
-esptool.py --chip esp32c3 -p /dev/ttyUSB0 read_flash 0x10000 0x1000 partitions_backup.bin
+# Partition Table (0x8000 - 0x9000)
+esptool.py --chip esp32c3 -p /dev/ttyUSB0 read_flash 0x8000 0x1000 partitions_backup.bin
 
-# Stock Firmware Partition (0x160000 - 0x2A0000, 1.25MB)
-esptool.py --chip esp32c3 -p /dev/ttyUSB0 read_flash 0x160000 0x140000 stock_ota1_backup.bin
+# App Slot 0 / ota_0 (0x10000 - 0x150000, 1.25MB)
+esptool.py --chip esp32c3 -p /dev/ttyUSB0 read_flash 0x10000 0x140000 ota0_backup.bin
+
+# App Slot 1 / ota_1 (0x150000 - 0x290000, 1.25MB)
+esptool.py --chip esp32c3 -p /dev/ttyUSB0 read_flash 0x150000 0x140000 ota1_backup.bin
 ```
 
 ---
@@ -220,7 +229,7 @@ If your feeder ever becomes unresponsive, fails an update, or is completely bric
 | **Microcontroller** | Espressif ESP32-C3FH4 (Single-core RISC-V @ 160MHz) |
 | **Flash Memory** | 4MB Embedded SPI NOR Flash |
 | **Coprocessor** | Sinowealth SC95F8766P (Motor drive, scale ADC, button handling) |
-| **Communication Bus** | Full-Duplex UART @ 9600 Baud (ESP32 `GPIO20`/`GPIO21` <-> Coprocessor) |
+| **Communication Bus** | Full-Duplex UART1 @ 115200 Baud 8N1 (ESP32 `GPIO19` TX / `GPIO18` RX <-> Coprocessor). UART0 (`GPIO21` TX / `GPIO20` RX @ 115200) is dedicated to external flashing/debug test pads. |
 | **Local Framework** | ESPHome (ESP-IDF Framework with Native API) |
 | **Home Assistant Compatibility** | HA Core 2024.1+ through 2026.x |
 

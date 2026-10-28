@@ -12,23 +12,32 @@ This allows you to test the entire zero-touch wireless onboarding flow from a co
 
 ## Architecture: Why Rollback is 100% Non-Destructive
 
-The Pawsync PPF-R361S feeder contains a **4MB SPI Flash** with a dual OTA partition layout:
+The Pawsync PPF-R361S feeder contains a **4MB SPI Flash** with an ESP-IDF dual OTA partition layout matching `partitions.csv`:
 
 ```
 0x000000 ┌───────────────────────────────────────┐
-         │ Bootloader (0x10000 bytes)            │
-0x010000 ├───────────────────────────────────────┤
+         │ Bootloader (0x8000 bytes)             │
+0x008000 ├───────────────────────────────────────┤
          │ Partition Table (0x1000 bytes)        │
-0x020000 ├───────────────────────────────────────┤
-         │ ota_0 (1.25 MB): ESPHome Local FW     │ ◄ Current Running Slot
-0x160000 ├───────────────────────────────────────┤
-         │ ota_1 (1.25 MB): Stock Factory FW     │ ◄ Pristine Factory Backup
+0x009000 ├───────────────────────────────────────┤
+         │ NVS (0x4000), otadata (0x2000), phy   │
+0x010000 ├───────────────────────────────────────┤
+         │ ota_0 (1.25 MB / 0x140000 bytes)      │ ◄ Active Running Slot
+0x150000 ├───────────────────────────────────────┤
+         │ ota_1 (1.25 MB / 0x140000 bytes)      │ ◄ Alternate Slot (Stock / Previous FW)
 0x290000 ├───────────────────────────────────────┤
-         │ usercfg & NVS: Calibration & Wi-Fi    │
+         │ usercfg, fac_data, storage, history   │
 0x400000 └───────────────────────────────────────┘
 ```
 
-When you initially flashed ESPHome, the flashing process installed the ESPHome image strictly into partition **`ota_0`**. The factory stock firmware in partition **`ota_1`** was left completely intact.
+When you initially transitioned from stock factory firmware to ESPHome via wireless OTA, stock firmware was in one slot and ESPHome was flashed into the alternate slot (e.g., `ota_0`). The factory stock firmware in the alternate partition (`ota_1`) was initially left intact.
+
+> [!WARNING]
+> ### ⚠️ A/B Ping-Pong Lifecycle vs Full Factory Restore
+> The software rollback switch (`switch.pawsync_feeder_unlock_factory_firmware_rollback` + `button.pawsync_feeder_rollback_to_factory_firmware_slot_ota_1`) instructs the ESP-IDF bootloader to toggle between `ota_0` and `ota_1`.
+> - **Initial State**: Immediately after the first wireless conversion, toggling slots reboots back into original stock factory firmware.
+> - **Subsequent ESPHome OTAs**: Once an ESPHome-to-ESPHome OTA is performed, ESPHome writes to the alternate slot. At this point, **both slots contain ESPHome builds** (current and previous version). Toggling rollback will switch between ESPHome versions, not factory firmware.
+> - **Permanent Factory Recovery**: To permanently restore pristine stock factory firmware at any point, flash your full 4MB factory backup image (`pawsync_factory_4MB_backup.bin`) via esptool (Method 3).
 
 ---
 
@@ -67,12 +76,13 @@ If your feeder is currently running ESPHome and connected to Home Assistant, you
 
 ---
 
-## Method 2: Command-Line USB Rollback (esptool)
+## Method 2: Command-Line Serial Rollback (esptool)
 
-If your feeder is not connected to Home Assistant or you prefer using a USB-C data cable connected to your computer:
+If your feeder is not connected to Home Assistant or you prefer resetting the boot slot via serial connection:
 
 ### Hardware Requirements
-- A USB-C data cable connected to the feeder's USB-C port (or internal ESP32-C3 programming header).
+- A 3.3V USB-to-UART adapter connected to the logic board test pads (`TX` GPIO21, `RX` GPIO20, `GND`).
+- Feeder powered by original 5V DC adapter.
 - Python 3 with `esptool`:
   ```bash
   pip install esptool
@@ -81,14 +91,14 @@ If your feeder is not connected to Home Assistant or you prefer using a USB-C da
 ### Step 1: Query Current Boot Partition
 Run:
 ```bash
-esptool.py --chip esp32c3 --port /dev/ttyACM0 read_flash 0xd000 0x2000 otadata.bin
+esptool.py --chip esp32c3 --port /dev/ttyUSB0 read_flash 0xd000 0x2000 otadata.bin
 ```
 
 ### Step 2: Set Boot Partition to `ota_1`
-To point the ESP32 bootloader back to partition `ota_1` (offset `0x160000`):
+To erase otadata and force the ESP32 bootloader to fallback to slot `ota_1` (offset `0x150000`):
 ```bash
 # Erase otadata partition to trigger bootloader fallback or write ota_1 sequence
-esptool.py --chip esp32c3 --port /dev/ttyACM0 erase_region 0xd000 0x2000
+esptool.py --chip esp32c3 --port /dev/ttyUSB0 erase_region 0xd000 0x2000
 ```
 Upon reboot, the ESP-IDF second-stage bootloader searches for the first valid partition or configured sequence and boots the stock factory partition.
 

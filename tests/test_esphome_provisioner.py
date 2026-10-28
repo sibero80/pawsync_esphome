@@ -17,6 +17,7 @@ def test_sanitize_filename():
 
 def test_generate_esphome_yaml():
     """Verify generated YAML content."""
+    # Test auto-generated credentials
     yaml_text = generate_esphome_yaml(
         device_name="pawsync-cat",
         friendly_name="Pawsync Cat Feeder",
@@ -32,7 +33,21 @@ def test_generate_esphome_yaml():
     assert "pawsync_base:" in yaml_text
     assert "https://github.com/sibero80/pawsync_esphome" in yaml_text
     assert "# Device MAC: AA:BB:CC:DD:EE:FF" in yaml_text
-    assert 'key: "2M4yBDYqWbBDSl3PIkccw2IkCUj5WIySqP8JHYVG7Mc="' in yaml_text
+    assert 'key: "' in yaml_text
+    assert 'password: "' in yaml_text
+
+    # Test explicit credential overrides
+    custom_yaml = generate_esphome_yaml(
+        device_name="pawsync-custom",
+        friendly_name="Pawsync Custom Feeder",
+        wifi_ssid="MyHomeNetwork",
+        wifi_password="SecretPassword123",
+        mac_address="AA:BB:CC:DD:EE:FF",
+        noise_psk="CUSTOM_NOISE_PSK_KEY_12345678901234567890=",
+        ota_password="custom_ota_password_123",
+    )
+    assert 'key: "CUSTOM_NOISE_PSK_KEY_12345678901234567890="' in custom_yaml
+    assert 'password: "custom_ota_password_123"' in custom_yaml
 
 
 @pytest.mark.asyncio

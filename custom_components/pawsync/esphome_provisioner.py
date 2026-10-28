@@ -8,7 +8,7 @@ import os
 import re
 from typing import Any
 
-from .const import DEFAULT_NOISE_PSK
+from .const import DEFAULT_NOISE_PSK, generate_noise_psk, generate_ota_password
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,11 +29,14 @@ def generate_esphome_yaml(
     remote_repo: str = "https://github.com/sibero80/pawsync_esphome",
     branch: str = "main",
     mac_address: str = "",
-    noise_psk: str = DEFAULT_NOISE_PSK,
+    noise_psk: str | None = None,
+    ota_password: str | None = None,
 ) -> str:
     """Generate ESPHome YAML configuration referencing the remote package."""
     clean_name = sanitize_filename(device_name)
     mac_comment = f"# Device MAC: {mac_address}\n" if mac_address else ""
+    key = noise_psk or generate_noise_psk()
+    ota_pass = ota_password or generate_ota_password()
 
     yaml_content = f"""# Auto-provisioned by PawSync Home Assistant Integration
 {mac_comment}substitutions:
@@ -56,10 +59,11 @@ wifi:
 
 api:
   encryption:
-    key: "{noise_psk}"
+    key: "{key}"
 
 ota:
   - platform: esphome
+    password: "{ota_pass}"
 """
     return yaml_content
 

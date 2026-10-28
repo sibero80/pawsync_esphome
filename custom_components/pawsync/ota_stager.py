@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import socket
@@ -82,12 +83,26 @@ class PawsyncOtaStager:
         self.port = port
         self.on_progress = on_progress
         self.on_complete = on_complete
+        self.sha256: str | None = None
         self._app: web.Application | None = None
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
         self._is_running = False
         self._transfer_started = False
         self._transfer_finished = False
+
+    def _compute_sha256(self) -> str:
+        """Verify firmware binary exists, is valid, and compute its SHA-256."""
+        if not os.path.exists(self.firmware_path):
+            raise FileNotFoundError(f"Firmware binary not found at {self.firmware_path}")
+        size = os.path.getsize(self.firmware_path)
+        if size < HEADER_LEN:
+            raise ValueError(f"Firmware binary is too small ({size} bytes, minimum {HEADER_LEN} bytes)")
+        h = hashlib.sha256()
+        with open(self.firmware_path, "rb") as f:
+            while chunk := f.read(65536):
+                h.update(chunk)
+        return h.hexdigest()
 
     @property
     def is_running(self) -> bool:
@@ -96,8 +111,8 @@ class PawsyncOtaStager:
 
     async def async_start(self) -> str:
         """Start the local staging HTTP server and return the download URL."""
-        if not os.path.exists(self.firmware_path):
-            raise FileNotFoundError(f"Firmware binary not found at {self.firmware_path}")
+        self.sha256 = self._compute_sha256()
+        _LOGGER.info("Verified firmware binary: %s (SHA-256: %s)", self.firmware_path, self.sha256)
 
         self._app = web.Application()
         self._app.router.add_get("/firmware.bin", self._handle_download)
@@ -106,21 +121,28 @@ class PawsyncOtaStager:
         self._runner = web.AppRunner(self._app)
         await self._runner.setup()
 
-        # Attempt to bind to requested port, fallback to dynamic if busy
+        # Bind specifically to host IP, fall back to 0.0.0.0 if interface binding fails
+        local_ip = get_local_ip()
+        bind_host = local_ip if local_ip != "127.0.0.1" else "0.0.0.0"
+
         try:
-            self._site = web.TCPSite(self._runner, "0.0.0.0", self.port)
+            self._site = web.TCPSite(self._runner, bind_host, self.port)
             await self._site.start()
         except OSError:
-            _LOGGER.warning("Port %d is in use, falling back to random available port", self.port)
-            self._site = web.TCPSite(self._runner, "0.0.0.0", 0)
-            await self._site.start()
-            # Retrieve assigned port
-            for server in self._site._server.sockets:
-                self.port = server.getsockname()[1]
-                break
+            _LOGGER.warning("Could not bind to %s:%d, trying 0.0.0.0", bind_host, self.port)
+            try:
+                self._site = web.TCPSite(self._runner, "0.0.0.0", self.port)
+                await self._site.start()
+            except OSError:
+                _LOGGER.warning("Port %d is in use, falling back to random available port on %s", self.port, bind_host)
+                self._site = web.TCPSite(self._runner, bind_host, 0)
+                await self._site.start()
+                # Retrieve assigned port
+                for server in self._site._server.sockets:
+                    self.port = server.getsockname()[1]
+                    break
 
         self._is_running = True
-        local_ip = get_local_ip()
         url = f"http://{local_ip}:{self.port}/firmware.bin"
         _LOGGER.info("Pawsync OTA Stager listening at %s", url)
         return url

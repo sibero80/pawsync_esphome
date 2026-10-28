@@ -46,7 +46,20 @@ async def test_ota_stager_lifecycle(tmp_path):
     try:
         url = await stager.async_start()
         assert stager.is_running is True
+        assert stager.sha256 is not None
+        assert len(stager.sha256) == 64
         assert "/firmware.bin" in url
     finally:
         await stager.async_stop()
         assert stager.is_running is False
+
+
+@pytest.mark.asyncio
+async def test_ota_stager_file_too_small(tmp_path):
+    """Verify OTA stager rejects file smaller than 129 bytes."""
+    small_fw = tmp_path / "small.bin"
+    small_fw.write_bytes(b"TOO_SHORT")
+
+    stager = PawsyncOtaStager(firmware_path=str(small_fw), port=0)
+    with pytest.raises(ValueError, match="too small"):
+        await stager.async_start()

@@ -1,0 +1,44 @@
+name: Bug Report
+description: Report a defect, crash, or unexpected behavior with PawSync ESPHome
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report an issue! Please check existing issues first before submitting.
+  - type: input
+    id: feeder-model
+    attributes:
+      label: Feeder Model & Hardware Version
+      description: Exact model number (e.g., PPF-R361S-WUS) and board markings if known.
+      placeholder: PPF-R361S
+    validations:
+      required: true
+  - type: input
+    id: firmware-version
+    attributes:
+      label: Firmware Version
+      description: ESPHome firmware version or commit hash (e.g. v1.1.1 or commit 6cc9d80)
+      placeholder: v1.1.1
+    validations:
+      required: true
+  - type: input
+    id: ha-version
+    attributes:
+      label: Home Assistant Version
+      placeholder: 2024.10.x or 2026.x
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the Bug
+      description: A clear and concise description of what the problem is.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs
+      description: Paste relevant ESPHome logs or Home Assistant integration logs.
+      render: shell

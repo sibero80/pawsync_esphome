@@ -226,10 +226,11 @@ class PawSyncFirmwareUpdateEntity(UpdateEntity):
                 self._attr_update_percentage = int(pct * 100)
                 self.async_write_ha_state()
 
+            device_noise_psk = self._entry.data.get("noise_psk") or DEFAULT_NOISE_PSK
             success = await async_flash_esphome_ota(
                 host=host,
                 firmware_binary=firmware_binary,
-                noise_psk=DEFAULT_NOISE_PSK,
+                noise_psk=device_noise_psk,
                 on_progress=_on_progress,
             )
 

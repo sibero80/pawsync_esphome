@@ -53,27 +53,46 @@ esphome run pawsync.yaml --device 192.168.1.45
 
 ---
 
-## 3. WebSerial / USB-C Direct Flashing
+## 3. Serial UART Flashing & Unbricking (esptool)
 
 If wireless flashing is unavailable or if you are recovering a bricked device:
 
 ### Hardware Connection:
-1. Connect a USB-C data cable between your computer and the feeder.
-2. The internal ESP32-C3 serial bridge will enumerate as a CDC USB Serial device (e.g., `/dev/ttyACM0` on Linux, `COMx` on Windows).
+1. Disassemble the base (see [README Hardware Teardown](README.md#-hardware-teardown-uart-pinout--flash-backuprestore-guide)).
+2. Connect a 3.3V USB-to-UART serial adapter to the labeled test pads:
+   - `TX` pad (ESP32-C3 `GPIO21`) -> Adapter `RX`
+   - `RX` pad (ESP32-C3 `GPIO20`) -> Adapter `TX`
+   - `GND` pad -> Adapter `GND`
+   - *Do NOT connect 3.3V* (power the feeder from its 5V DC adapter).
+3. Put the device into download mode: connect `BOOT` (`GPIO9`) to `GND`, plug in 5V DC power, release `GPIO9` after 2 seconds.
 
 ### Flashing via esptool:
 ```bash
-esptool.py --chip esp32c3 --port /dev/ttyACM0 --baud 921600 write_flash 0x20000 .esphome/build/pawsync-feeder/build/firmware.bin
+# Complete factory image (bootloader, partition table, and app at offset 0x0)
+esptool.py --chip esp32c3 --port /dev/ttyUSB0 --baud 921600 write_flash 0x0 .esphome/build/pawsync-feeder/build/firmware.factory.bin
+
+# Or app partition only (ota_0 slot at offset 0x10000 matching partitions.csv)
+esptool.py --chip esp32c3 --port /dev/ttyUSB0 --baud 921600 write_flash 0x10000 .esphome/build/pawsync-feeder/build/pawsync-feeder.bin
 ```
 
 ---
 
 ## 4. Hardware Pinout Reference
 
-| Function | ESP32-C3 Pin | SC95F8766P Coprocessor Pin | Description |
+### External Serial Pads (UART0 - Service & Flashing)
+| Test Pad | ESP32-C3 Pin | Function | Notes |
+| :--- | :---: | :--- | :--- |
+| **`TX`** | `GPIO21` | UART0 TX (115200 Baud) | Connect to USB-UART Adapter RX |
+| **`RX`** | `GPIO20` | UART0 RX (115200 Baud) | Connect to USB-UART Adapter TX |
+| **`GND`** | `GND` | Ground Reference | Connect to USB-UART Adapter GND |
+| **`BOOT`** | `GPIO9` | Strapping / Bootloader Pin | Pull to GND during power-up for bootloader mode |
+
+### Internal Coprocessor Bus (UART1 - Dedicated Peripheral Link)
+| Bus Line | ESP32-C3 Pin | SC95F8766P Coprocessor Pin | Description |
 | :--- | :---: | :---: | :--- |
-| **UART TX** | `GPIO21` | `RXD` (Pin 4) | Commands to Motor/Scale Coprocessor |
-| **UART RX** | `GPIO20` | `TXD` (Pin 5) | Telemetry & Scale Weight Packets |
-| **Baud Rate** | - | - | 9600 Baud, 8N1, Full Duplex |
+| **UART1 TX** | `GPIO19` | `RXD` (Pin 4) | Commands to Motor/Scale Coprocessor (115200 Baud 8N1) |
+| **UART1 RX** | `GPIO18` | `TXD` (Pin 5) | Telemetry & Scale Weight Packets (115200 Baud 8N1) |
 | **Status LED** | `GPIO3` | - | Wi-Fi / Pairing Indicator |
-| **Boot Mode** | `GPIO9` | - | Internal Pull-up (Pull low for bootloader) |
+
+> [!NOTE]
+> GPIO18/GPIO19 multiplex with the ESP32-C3 USB-Serial-JTAG interface. Because these pins are hardwired to the coprocessor UART, internal USB-JTAG CDC is not exposed. Serial recovery must use UART0 test pads.
