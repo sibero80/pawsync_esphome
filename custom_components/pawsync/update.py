@@ -21,8 +21,8 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_HOST, CONF_SELECTED_FEEDER, DOMAIN, VERSION
-from .espota_client import async_flash_esphome_ota
+from .const import CONF_HOST, CONF_SELECTED_FEEDER, DEFAULT_NOISE_PSK, DOMAIN, VERSION
+from .espota_client import async_flash_esphome_ota, sanitize_firmware_binary
 from .esphome_provisioner import resolve_arp_ip
 
 _LOGGER = logging.getLogger(__name__)
@@ -220,10 +220,7 @@ class PawSyncFirmwareUpdateEntity(UpdateEntity):
             data = await self.hass.async_add_executor_job(_read_bin)
 
             # Strip 129-byte VeSync container header if present
-            if data.startswith(b"\xaa\x55") or len(data) == 1225633:
-                firmware_binary = data[129:]
-            else:
-                firmware_binary = data
+            firmware_binary = sanitize_firmware_binary(data)
 
             def _on_progress(pct: float) -> None:
                 self._attr_update_percentage = int(pct * 100)
@@ -232,12 +229,13 @@ class PawSyncFirmwareUpdateEntity(UpdateEntity):
             success = await async_flash_esphome_ota(
                 host=host,
                 firmware_binary=firmware_binary,
+                noise_psk=DEFAULT_NOISE_PSK,
                 on_progress=_on_progress,
             )
 
             if not success:
                 raise HomeAssistantError(
-                    f"ESPHome OTA upload to {host} failed. Ensure feeder is online and on the same network."
+                    f"ESPHome OTA upload to {host} failed. Ensure feeder is online and check Home Assistant logs for details."
                 )
 
             # Mark version as updated

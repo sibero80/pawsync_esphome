@@ -17,6 +17,7 @@ from custom_components.pawsync.espota_client import (
     RESPONSE_UPDATE_END_OK,
     RESPONSE_UPDATE_PREPARE_OK,
     async_flash_esphome_ota,
+    sanitize_firmware_binary,
 )
 from custom_components.pawsync.update import (
     PawSyncFirmwareUpdateEntity,
@@ -58,11 +59,11 @@ async def test_update_entity_installed_and_latest_version():
         entity = PawSyncFirmwareUpdateEntity(hass, entry)
         assert entity.installed_version == "1.0.8"
 
-    # Case 3: Already updated to 1.1.0
-    dev_info.project_version = "1.1.0"
+    # Case 3: Already updated to latest version
+    dev_info.project_version = VERSION
     with patch("homeassistant.helpers.device_registry.async_get", return_value=dev_reg):
         entity = PawSyncFirmwareUpdateEntity(hass, entry)
-        assert entity.installed_version == "1.1.0"
+        assert entity.installed_version == VERSION
         assert entity.installed_version == entity.latest_version
 
 
@@ -83,8 +84,8 @@ async def test_update_entity_release_notes():
 @pytest.mark.asyncio
 async def test_esphome_ota_flasher_protocol():
     """Test full ESPHome OTA v2 protocol handshake and streaming over mock TCP socket."""
-    # Create test dummy payload
-    payload = b"DUMMY_ESPHOME_FIRMWARE_BINARY_BYTES" * 300
+    # Create test dummy payload starting with ESP32 magic byte 0xE9
+    payload = b"\xe9" + (b"DUMMY_ESPHOME_FIRMWARE_BINARY_BYTES" * 300)
 
     server_received_bytes = bytearray()
     server_auth_seen = False
@@ -133,10 +134,10 @@ async def test_esphome_ota_flasher_protocol():
         writer.write(bytes([RESPONSE_BIN_MD5_OK]))
         await writer.drain()
 
-        # 9. Read chunks and ack each
+        # 9. Read chunks (8192 bytes) and ack each
         remaining = upload_size
         while remaining > 0:
-            to_read = min(4096, remaining)
+            to_read = min(8192, remaining)
             chunk = await reader.readexactly(to_read)
             server_received_bytes.extend(chunk)
             remaining -= len(chunk)
@@ -213,3 +214,20 @@ async def test_update_install_execution():
         assert mock_flash.called
         assert entity.installed_version == entity.latest_version
         assert dev_reg.async_update_device.called
+
+
+def test_sanitize_firmware_binary():
+    """Test stripping VeSync 129-byte container header for native ESPHome OTA."""
+    # Pure ESP32 image starting with 0xE9
+    pure_image = b"\xe9\x06\x02\x2f" + (b"\x00" * 1000)
+    assert sanitize_firmware_binary(pure_image) == pure_image
+
+    # VeSync container wrapped image: 129 bytes header + pure ESP32 image
+    container_header = b"\x01\x7e\xd8\xe5" + (b"\xaa" * 125)
+    assert len(container_header) == 129
+    wrapped_image = container_header + pure_image
+    sanitized = sanitize_firmware_binary(wrapped_image)
+    assert sanitized == pure_image
+    assert len(sanitized) == len(pure_image)
+    assert sanitized[0] == 0xE9
+
