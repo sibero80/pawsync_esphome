@@ -30,6 +30,15 @@ jobs:
       - name: Setup Dummy Secrets for Build
         run: |
           cp secrets.yaml.example secrets.yaml
+          python3 -c "
+          import secrets, base64
+          with open('secrets.yaml', 'r') as f:
+              content = f.read()
+          noise_psk = base64.b64encode(secrets.token_bytes(32)).decode('ascii')
+          content = content.replace('\"Generated_Base64_Key\"', f'\"{noise_psk}\"')
+          with open('secrets.yaml', 'w') as f:
+              f.write(content)
+          "
 
       - name: Compile ESPHome Firmware
         run: |
