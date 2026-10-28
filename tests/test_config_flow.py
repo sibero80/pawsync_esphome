@@ -1,5 +1,6 @@
 """Tests for Pawsync Config Flow."""
 
+import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,6 +14,13 @@ from custom_components.pawsync.const import (
     MODE_DIRECT_ESPHOME,
 )
 from custom_components.pawsync.config_flow import PawsyncConfigFlow
+
+
+@pytest.fixture(autouse=True)
+def mock_auto_adopt():
+    """Mock background esphome auto-adoption task to avoid unawaited coroutines."""
+    with patch("custom_components.pawsync.config_flow.async_auto_adopt_esphome", new=MagicMock(return_value=None)):
+        yield
 
 
 @pytest.mark.asyncio
@@ -95,10 +103,9 @@ async def test_cloud_onboarding_full_flow():
     assert res4["step_id"] == "flash_wizard"
 
     # Step 5: Flash wizard (choose skip or manual to complete)
-    with patch("custom_components.pawsync.config_flow.async_auto_adopt_esphome", new_callable=MagicMock):
-        res5 = await flow.async_step_flash_wizard({
-            "flash_method": FLASH_METHOD_SKIP,
-        })
+    res5 = await flow.async_step_flash_wizard({
+        "flash_method": FLASH_METHOD_SKIP,
+    })
     assert res5["type"] == "create_entry"
     assert "Fluffy's Feeder" in res5["title"]
     assert res5["data"][CONF_SELECTED_FEEDER] == "cid_cat_001"
