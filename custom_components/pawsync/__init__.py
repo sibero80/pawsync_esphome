@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 
@@ -20,6 +21,8 @@ from .esphome_provisioner import async_auto_adopt_esphome
 from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
+
+PLATFORMS: list[Platform] = [Platform.UPDATE]
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
@@ -86,7 +89,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
         )
 
-    # 3. Reload entry on options update (e.g. unit system switch)
+    # 3. Forward setup to platforms (e.g. Firmware Update entity)
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # 4. Reload entry on options update (e.g. unit system switch)
     entry.async_on_unload(entry.add_update_listener(async_update_options))
 
     _LOGGER.info("Loaded PawSync config entry for %s", entry.title)
@@ -100,7 +106,8 @@ async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a PawSync Feeder config entry."""
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if DOMAIN in hass.data and entry.entry_id in hass.data[DOMAIN]:
         hass.data[DOMAIN].pop(entry.entry_id)
         _LOGGER.info("Unloaded PawSync config entry for %s", entry.title)
-    return True
+    return unload_ok

@@ -31,6 +31,10 @@ esphome:
               id(select_active_plan).publish_state(plans[p]);
             }
 
+dashboard_import:
+  package_import_url: github://sibero80/pawsync_esphome/pawsync.yaml@main
+  import_full_config: true
+
 esp32:
   board: esp32-c3-devkitm-1
   variant: esp32c3
@@ -331,6 +335,13 @@ text_sensor:
       name: "Food Tank Category"
     last_refill_time:
       name: "Last Refill Time"
+  - platform: template
+    name: "Firmware Version"
+    id: firmware_version
+    entity_category: diagnostic
+    icon: "mdi:tag-outline"
+    lambda: |-
+      return std::string("1.1.0");
 
 button:
   - platform: ppf_r361s

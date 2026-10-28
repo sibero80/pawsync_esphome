@@ -44,6 +44,12 @@ if "homeassistant" not in sys.modules:
     helpers.aiohttp_client = aiohttp_client
     ha.helpers = helpers
 
+    ha_const = MagicMock()
+    class Platform:
+        UPDATE = "update"
+    ha_const.Platform = Platform
+    sys.modules["homeassistant.const"] = ha_const
+
     sys.modules["homeassistant"] = ha
     sys.modules["homeassistant.config_entries"] = config_entries
     sys.modules["homeassistant.core"] = core
@@ -52,3 +58,49 @@ if "homeassistant" not in sys.modules:
     sys.modules["homeassistant.helpers.aiohttp_client"] = aiohttp_client
     sys.modules["homeassistant.components"] = MagicMock()
     sys.modules["homeassistant.components.frontend"] = MagicMock()
+    sys.modules["homeassistant.components.http"] = MagicMock()
+
+    class HomeAssistantError(Exception):
+        pass
+
+    ha_exc = MagicMock()
+    ha_exc.HomeAssistantError = HomeAssistantError
+    sys.modules["homeassistant.exceptions"] = ha_exc
+
+    class UpdateDeviceClass:
+        FIRMWARE = "firmware"
+
+    class UpdateEntityFeature:
+        INSTALL = 1
+        PROGRESS = 2
+        RELEASE_NOTES = 4
+
+    class UpdateEntity:
+        _attr_has_entity_name = True
+        _attr_name = None
+        _attr_title = None
+        _attr_device_class = None
+        _attr_supported_features = 0
+        _attr_unique_id = None
+        _attr_device_info = None
+        _attr_in_progress = False
+        _attr_update_percentage = None
+
+        def async_write_ha_state(self):
+            pass
+
+    update_module = MagicMock()
+    update_module.UpdateDeviceClass = UpdateDeviceClass
+    update_module.UpdateEntityFeature = UpdateEntityFeature
+    update_module.UpdateEntity = UpdateEntity
+    sys.modules["homeassistant.components.update"] = update_module
+
+    class DeviceInfo(dict):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.__dict__.update(kwargs)
+
+    dev_reg = MagicMock()
+    dev_reg.DeviceInfo = DeviceInfo
+    sys.modules["homeassistant.helpers.device_registry"] = dev_reg
+    sys.modules["homeassistant.helpers.entity_platform"] = MagicMock()
