@@ -4,6 +4,7 @@
 [![ESPHome Version](https://img.shields.io/badge/ESPHome-2024.6%2B-blue.svg)](https://esphome.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![HA Minimum](https://img.shields.io/badge/Home%20Assistant-2024.1%2B-blue.svg)](https://home-assistant.io)
+[![Support Matruska](https://img.shields.io/badge/Donate-Matruska%20Cat%20Shelter-ea4c89.svg?logo=paypal&logoColor=white)](https://www.paypal.com/ncp/payment/KMWR984RL7M6G)
 
 **100% Local, Cloud-Free Control of the Pawsync PPF-R361S Smart Pet Feeder in Home Assistant.**
 
@@ -218,6 +219,33 @@ If your feeder ever becomes unresponsive, fails an update, or is completely bric
 - [**Guided Onboarding Walkthrough**](ONBOARDING_GUIDE.md): Visual, step-by-step adoption guide.
 - [**Flashing & Firmware Architecture**](FLASHING_WIZARD.md): Deep dive into wireless OTA, WebSerial, and ESPHome CLI methods.
 - [**Stock Rollback & Recovery Runbook**](STOCK_ROLLBACK_AND_RECOVERY.md): Exact instructions for rolling back to factory stock firmware to test clean onboarding from scratch.
+
+---
+
+## 🐾 Support Matruska Cat Shelter (Medellín)
+
+Instead of buying the developer a coffee, please consider helping rescued cats in need!
+
+<table>
+  <tr>
+    <td width="220" align="center" valign="middle">
+      <img src="docs/images/matruska_rescue.jpg" width="200" alt="Rescued kitten at Matruska shelter" style="border-radius: 8px;" />
+    </td>
+    <td valign="middle">
+      <p>
+        <strong><a href="https://matruska.co">Matruska</a></strong> is a grassroots, non-profit cat shelter and foster home based in the Medellín metropolitan area (Envigado, Colombia). They specialize in rescuing, rehabilitating, and finding forever homes for abandoned, sick, and special-needs cats—including vulnerable newborn kittens requiring around-the-clock bottle feeding and cats with mobility disabilities.
+      </p>
+      <p>
+        If this free, open-source project gave you local control over your pet feeder, saved you subscription fees, or brought peace of mind to your feeding routine, please consider redirecting your appreciation to help fund life-saving veterinary care, medicines, and food for these sweet kitties.
+      </p>
+      <p>
+        <a href="https://www.paypal.com/ncp/payment/KMWR984RL7M6G" target="_blank" rel="noopener noreferrer">
+          <img src="https://img.shields.io/badge/Donate%20to%20Matruska%20via%20PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white" alt="Donate to Matruska via PayPal" />
+        </a>
+      </p>
+    </td>
+  </tr>
+</table>
 
 ---
 
