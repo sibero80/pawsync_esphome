@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import secrets
 import socket
 import time
 from typing import Callable
@@ -83,6 +84,9 @@ class PawsyncOtaStager:
         self.port = port
         self.on_progress = on_progress
         self.on_complete = on_complete
+        self.token: str = secrets.token_hex(8)
+        self.timeout_sec: float = 600.0  # 10 minutes auto-stop
+        self._timeout_task: asyncio.Task | None = None
         self.sha256: str | None = None
         self._app: web.Application | None = None
         self._runner: web.AppRunner | None = None
@@ -115,6 +119,9 @@ class PawsyncOtaStager:
         _LOGGER.info("Verified firmware binary: %s (SHA-256: %s)", self.firmware_path, self.sha256)
 
         self._app = web.Application()
+        tokenized_path = f"/firmware_{self.token}.bin"
+        self._app.router.add_get(tokenized_path, self._handle_download)
+        # Retain standard paths for local development / testing
         self._app.router.add_get("/firmware.bin", self._handle_download)
         self._app.router.add_get("/pawsync_ota_update.bin", self._handle_download)
 
@@ -143,12 +150,28 @@ class PawsyncOtaStager:
                     break
 
         self._is_running = True
-        url = f"http://{local_ip}:{self.port}/firmware.bin"
+        url = f"http://{local_ip}:{self.port}{tokenized_path}"
         _LOGGER.info("Pawsync OTA Stager listening at %s", url)
+
+        # Start 10-minute timeout task
+        async def _timeout_watcher():
+            try:
+                await asyncio.sleep(self.timeout_sec)
+                if self._is_running and not self._transfer_started:
+                    _LOGGER.info("Pawsync OTA Stager idle timeout reached (%ds), stopping server", int(self.timeout_sec))
+                    await self.async_stop()
+            except asyncio.CancelledError:
+                pass
+
+        self._timeout_task = asyncio.create_task(_timeout_watcher())
         return url
 
     async def async_stop(self) -> None:
         """Stop the staging HTTP server."""
+        current_task = asyncio.current_task()
+        if self._timeout_task and self._timeout_task != current_task and not self._timeout_task.done():
+            self._timeout_task.cancel()
+            self._timeout_task = None
         if self._site:
             await self._site.stop()
             self._site = None
@@ -223,6 +246,8 @@ class PawsyncOtaStager:
             self._transfer_finished = True
             if self.on_complete:
                 self.on_complete()
+            # Automatically stop stager after transfer completes
+            asyncio.create_task(self.async_stop())
 
         except Exception as err:
             _LOGGER.warning("Connection error streaming to %s: %s", client_ip, err)

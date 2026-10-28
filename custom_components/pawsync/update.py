@@ -21,7 +21,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_HOST, CONF_SELECTED_FEEDER, DEFAULT_NOISE_PSK, DOMAIN, VERSION
+from .const import CONF_HOST, CONF_SELECTED_FEEDER, DOMAIN, VERSION, generate_noise_psk
 from .espota_client import async_flash_esphome_ota, sanitize_firmware_binary
 from .esphome_provisioner import resolve_arp_ip
 
@@ -226,7 +226,7 @@ class PawSyncFirmwareUpdateEntity(UpdateEntity):
                 self._attr_update_percentage = int(pct * 100)
                 self.async_write_ha_state()
 
-            device_noise_psk = self._entry.data.get("noise_psk") or DEFAULT_NOISE_PSK
+            device_noise_psk = self._entry.data.get("noise_psk") or generate_noise_psk()
             success = await async_flash_esphome_ota(
                 host=host,
                 firmware_binary=firmware_binary,

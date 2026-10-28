@@ -102,5 +102,6 @@ async def test_cloud_onboarding_full_flow():
     assert res5["type"] == "create_entry"
     assert "Fluffy's Feeder" in res5["title"]
     assert res5["data"][CONF_SELECTED_FEEDER] == "cid_cat_001"
+    assert res5["data"].get("token") is None
     assert "noise_psk" in res5["description_placeholders"]
     assert len(res5["description_placeholders"]["noise_psk"]) == 44

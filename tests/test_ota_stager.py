@@ -48,7 +48,7 @@ async def test_ota_stager_lifecycle(tmp_path):
         assert stager.is_running is True
         assert stager.sha256 is not None
         assert len(stager.sha256) == 64
-        assert "/firmware.bin" in url
+        assert f"/firmware_{stager.token}.bin" in url
     finally:
         await stager.async_stop()
         assert stager.is_running is False
@@ -63,3 +63,19 @@ async def test_ota_stager_file_too_small(tmp_path):
     stager = PawsyncOtaStager(firmware_path=str(small_fw), port=0)
     with pytest.raises(ValueError, match="too small"):
         await stager.async_start()
+
+
+@pytest.mark.asyncio
+async def test_ota_stager_auto_timeout(tmp_path):
+    """Verify OTA stager automatically shuts down after idle timeout."""
+    import asyncio
+    dummy_fw = tmp_path / "firmware.bin"
+    dummy_fw.write_bytes(b"A" * 129 + b"B" * 2048)
+
+    stager = PawsyncOtaStager(firmware_path=str(dummy_fw), port=0)
+    stager.timeout_sec = 0.05  # Short timeout for test
+    url = await stager.async_start()
+    assert stager.is_running is True
+    # Wait for timeout to trigger
+    await asyncio.sleep(0.1)
+    assert stager.is_running is False

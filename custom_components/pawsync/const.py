@@ -54,8 +54,8 @@ MAX_FIRMWARE_SIZE = 1310720  # 1.25 MB (0x140000)
 # Default Defaults
 DEFAULT_COUNTRY_CODE = "US"
 DEFAULT_TIME_ZONE = "America/New_York"
-# Legacy fallback key for existing v1.0.8/v1.1.1 installations
-DEFAULT_NOISE_PSK = "2M4yBDYqWbBDSl3PIkccw2IkCUj5WIySqP8JHYVG7Mc="
+# Deprecated: Static legacy fallback retired in v1.1.3; all setups must use generate_noise_psk()
+DEFAULT_NOISE_PSK = None
 
 
 def generate_noise_psk() -> str:

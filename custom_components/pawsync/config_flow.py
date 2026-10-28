@@ -25,7 +25,6 @@ from .const import (
     CONF_UNIT_SYSTEM,
     CONF_WIFI_PASSWORD,
     DEFAULT_COUNTRY_CODE,
-    DEFAULT_NOISE_PSK,
     DEFAULT_TIME_ZONE,
     DOMAIN,
     FLASH_METHOD_OTA,
@@ -344,7 +343,7 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             entry_data = {
                 CONF_ONBOARDING_MODE: self._onboarding_mode,
                 CONF_ACCOUNT_ID: self._cloud_auth.get(CONF_ACCOUNT_ID),
-                CONF_TOKEN: self._cloud_auth.get(CONF_TOKEN),
+                CONF_TOKEN: None,  # Redacted: cloud token is bootstrap-only and not persisted
                 CONF_SELECTED_FEEDER: cid,
                 "feeder_info": self._selected_feeder_info,
                 "noise_psk": device_noise_psk,

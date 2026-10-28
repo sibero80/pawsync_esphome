@@ -14,8 +14,8 @@ from .cards import async_register_cards
 from .const import (
     CONF_HOST,
     CONF_SELECTED_FEEDER,
-    DEFAULT_NOISE_PSK,
     DOMAIN,
+    generate_noise_psk,
 )
 from .esphome_provisioner import async_auto_adopt_esphome
 from .services import async_setup_services
@@ -79,7 +79,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # 2. Trigger automated ESPHome background adoption if host is known
     if host:
-        device_noise_psk = entry.data.get("noise_psk") or DEFAULT_NOISE_PSK
+        device_noise_psk = entry.data.get("noise_psk")
+        if not device_noise_psk:
+            device_noise_psk = generate_noise_psk()
+            hass.config_entries.async_update_entry(
+                entry,
+                data={**entry.data, "noise_psk": device_noise_psk},
+            )
         hass.async_create_task(
             async_auto_adopt_esphome(
                 hass=hass,

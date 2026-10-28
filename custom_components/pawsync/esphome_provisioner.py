@@ -8,7 +8,7 @@ import os
 import re
 from typing import Any
 
-from .const import DEFAULT_NOISE_PSK, generate_noise_psk, generate_ota_password
+from .const import generate_noise_psk, generate_ota_password
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -202,7 +202,7 @@ async def _advance_esphome_flow(hass: Any, flow_id: str, step_id: str | None, no
 async def async_auto_adopt_esphome(
     hass: Any,
     host: str,
-    noise_psk: str = DEFAULT_NOISE_PSK,
+    noise_psk: str | None = None,
     mac: str | None = None,
     feeder_name: str = "Pawsync Feeder",
     max_attempts: int = 40,
@@ -213,6 +213,7 @@ async def async_auto_adopt_esphome(
     Monitors network connectivity to port 6053 and auto-completes the ESPHome
     config flow with the pre-configured Noise PSK encryption key.
     """
+    effective_psk = noise_psk or generate_noise_psk()
     _LOGGER.info("Starting automated ESPHome adoption monitor for host: %s (MAC: %s)", host, mac)
     clean_mac = mac.replace(":", "").replace("-", "").strip().lower() if mac else ""
 
@@ -296,7 +297,7 @@ async def async_auto_adopt_esphome(
                 step_id = result.get("step_id")
 
                 if _is_flow_type(result, "form") and flow_id:
-                    success = await _advance_esphome_flow(hass, flow_id, step_id, noise_psk)
+                    success = await _advance_esphome_flow(hass, flow_id, step_id, effective_psk)
                     if success:
                         return True
                 elif _is_flow_type(result, "create_entry"):
@@ -308,7 +309,7 @@ async def async_auto_adopt_esphome(
                         p_id = pflow.get("flow_id")
                         p_step = pflow.get("step_id")
                         if p_id:
-                            success = await _advance_esphome_flow(hass, p_id, p_step, noise_psk)
+                            success = await _advance_esphome_flow(hass, p_id, p_step, effective_psk)
                             if success:
                                 return True
             except Exception as init_err:

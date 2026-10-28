@@ -11,13 +11,45 @@ permissions:
 
 jobs:
   release:
-    name: Create GitHub Release
+    name: Build & Create GitHub Release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install esphome cryptography
+
+      - name: Setup Dummy Secrets for Build
+        run: |
+          cp secrets.yaml.example secrets.yaml
+
+      - name: Compile ESPHome Firmware
+        run: |
+          esphome compile pawsync.yaml
+
+      - name: Package VeSync OTA Container
+        run: |
+          python tools/ota/build_vesync_ota.py .esphome/build/pawsync-feeder/build/firmware.ota.bin -o pawsync_ota_update.bin --version ${{ github.ref_name }}
+
+      - name: Generate Checksums
+        run: |
+          sha256sum pawsync_ota_update.bin .esphome/build/pawsync-feeder/build/firmware.factory.bin .esphome/build/pawsync-feeder/build/firmware.ota.bin > checksums.txt
+          cat checksums.txt
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          files: |
+            pawsync_ota_update.bin
+            checksums.txt
+            .esphome/build/pawsync-feeder/build/firmware.factory.bin
+            .esphome/build/pawsync-feeder/build/firmware.ota.bin
