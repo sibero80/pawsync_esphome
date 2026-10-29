@@ -91,13 +91,10 @@ Choose your preferred installation method:
 ### Step 7: Automated Adoption & Device Registration
 1. Once the flash command is dispatched, Home Assistant registers the feeder in your **Device Registry** under **PawSync**.
 2. As soon as the feeder boots into ESPHome, the integration automatically completes the ESPHome handshake in the background:
-   - Sets up the encrypted native API connection.
-   - Pre-populates the standard Noise PSK encryption key (`2M4yBDYqWbBDSl3PIkccw2IkCUj5WIySqP8JHYVG7Mc=`).
-   - Registers all 33 entities with zero manual intervention required.
-3. If Home Assistant ever prompts you manually for the device's encryption key, enter:
-   ```text
-   2M4yBDYqWbBDSl3PIkccw2IkCUj5WIySqP8JHYVG7Mc=
-   ```
+   - Sets up the encrypted native API connection using a unique, cryptographically generated 32-byte Noise PSK.
+   - Saves all device credentials into `/config/esphome/secrets.yaml` under MAC-scoped keys (`feeder_<mac>_*`) with strict mode `0600` permissions.
+   - Registers all entities with zero manual intervention required.
+3. If Home Assistant ever prompts you manually for the device's encryption key, you can find the unique per-device Noise PSK saved under `feeder_<mac>_noise_psk` in your `/config/esphome/secrets.yaml` or view it in the integration entry's device card.
 
 ---
 

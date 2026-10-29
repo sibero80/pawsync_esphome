@@ -79,3 +79,158 @@ async def test_ota_stager_auto_timeout(tmp_path):
     # Wait for timeout to trigger
     await asyncio.sleep(0.1)
     assert stager.is_running is False
+
+
+@pytest.mark.asyncio
+async def test_ota_stager_relative_path_tempfile_fallback(tmp_path, monkeypatch):
+    """Verify OTA stager uses tempfile when firmware_path has no directory component."""
+    from tests.fixtures.synthetic_firmware import create_synthetic_vesync_container
+
+    monkeypatch.chdir(tmp_path)
+    dummy_fw = tmp_path / "firmware.bin"
+    dummy_fw.write_bytes(create_synthetic_vesync_container())
+
+    # Relative path with no directory component
+    stager = PawsyncOtaStager(
+        firmware_path="firmware.bin",
+        port=0,
+        wifi_ssid="TestSSID",
+        wifi_password="TestPassword",
+    )
+    try:
+        url = await stager.async_start()
+        assert stager.is_running is True
+        assert stager.sha256 is not None
+    finally:
+        await stager.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_ota_stager_untokenized_routes_return_404(tmp_path):
+    """Verify legacy untokenized stager routes return 404 Not Found."""
+    dummy_fw = tmp_path / "firmware.bin"
+    dummy_fw.write_bytes(b"A" * 129 + b"B" * 2048)
+
+    stager = PawsyncOtaStager(firmware_path=str(dummy_fw), port=0)
+    try:
+        url = await stager.async_start()
+        base_url = url.rsplit("/", 1)[0]
+
+        async with aiohttp.ClientSession() as session:
+            # Untokenized routes must return 404
+            async with session.get(f"{base_url}/firmware.bin") as resp:
+                assert resp.status == 404
+
+            async with session.get(f"{base_url}/pawsync_ota_update.bin") as resp:
+                assert resp.status == 404
+    finally:
+        await stager.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_ota_stager_one_shot_rejection(tmp_path):
+    """Verify duplicate download requests are rejected with 410 Gone."""
+    dummy_fw = tmp_path / "firmware.bin"
+    dummy_fw.write_bytes(b"A" * 129 + b"B" * 512)
+
+    stager = PawsyncOtaStager(firmware_path=str(dummy_fw), port=0)
+    try:
+        url = await stager.async_start()
+
+        async with aiohttp.ClientSession() as session:
+            # First request connects and initiates download
+            async with session.get(url) as resp1:
+                assert resp1.status == 200
+
+            # Second request must be rejected as one-shot link has already been used
+            async with session.get(url) as resp2:
+                assert resp2.status == 410
+    finally:
+        await stager.async_stop()
+
+
+@pytest.mark.asyncio
+async def test_ota_stager_customized_file_cleanup(tmp_path):
+    """Verify pawsync_ota_customized.bin is guaranteed to be deleted on stager stop."""
+    from tests.fixtures.synthetic_firmware import create_synthetic_vesync_container
+
+    dummy_fw = tmp_path / "firmware.bin"
+    dummy_fw.write_bytes(create_synthetic_vesync_container())
+
+    stager = PawsyncOtaStager(
+        firmware_path=str(dummy_fw),
+        port=0,
+        wifi_ssid="TestCleanSSID",
+        wifi_password="TestCleanPassword",
+    )
+    url = await stager.async_start()
+    assert stager.is_running is True
+    assert stager._customized_path is not None
+    assert os.path.exists(stager._customized_path) is True
+
+    # Stop stager
+    await stager.async_stop()
+    assert stager.is_running is False
+    # Verify temporary customized binary was deleted
+    assert os.path.exists(stager._customized_path or "") is False
+
+
+@pytest.mark.asyncio
+async def test_ota_stager_customizes_noise_psk_and_ota_password(tmp_path):
+    """Verify stager patches Wi-Fi, Noise PSK, and OTA password into served image."""
+    from custom_components.pawsync.firmware_patcher import (
+        SSID_PLACEHOLDER,
+        PASS_PLACEHOLDER,
+        NOISE_PSK_PLACEHOLDER,
+        OTA_PASSWORD_PLACEHOLDER,
+        package_vesync_ota_container,
+        recalculate_esp32_checksum,
+        recalculate_esp32_sha256,
+        generate_noise_psk,
+        generate_ota_password,
+    )
+
+    dummy_fw = tmp_path / "firmware.bin"
+    payload = (
+        b"INIT_"
+        + SSID_PLACEHOLDER
+        + b"_MID_"
+        + PASS_PLACEHOLDER
+        + b"_PSK_"
+        + NOISE_PSK_PLACEHOLDER
+        + b"_OTA_"
+        + OTA_PASSWORD_PLACEHOLDER
+        + b"_TAIL"
+    )
+    seg_header = struct.pack("<II", 0x3FFB0000, len(payload))
+    raw = bytearray(24)
+    raw[0] = 0xE9
+    raw[1] = 1
+    raw += seg_header + payload
+    raw += bytearray(33)
+    recalculate_esp32_checksum(raw)
+    recalculate_esp32_sha256(raw)
+    dummy_fw.write_bytes(package_vesync_ota_container(bytes(raw)))
+
+    test_psk = generate_noise_psk()
+    test_ota = generate_ota_password(16)
+
+    stager = PawsyncOtaStager(
+        firmware_path=str(dummy_fw),
+        port=0,
+        wifi_ssid="PawsyncSSID",
+        wifi_password="PawsyncPassword",
+        noise_psk=test_psk,
+        ota_password=test_ota,
+    )
+    url = await stager.async_start()
+    try:
+        assert stager.is_running is True
+        assert stager._customized_path is not None
+        customized_bytes = open(stager._customized_path, "rb").read()
+        assert b"PawsyncSSID" in customized_bytes
+        assert b"PawsyncPassword" in customized_bytes
+        assert test_psk.encode("ascii") in customized_bytes
+        assert test_ota.encode("ascii") in customized_bytes
+    finally:
+        await stager.async_stop()

@@ -5,11 +5,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from pathlib import Path
 import re
+import shutil
+import tempfile
+import time
 from typing import Any
 
+import yaml
+
 from .const import (
-    TRANSITION_NOISE_PSK,
     generate_noise_psk,
     generate_ota_password,
 )
@@ -26,6 +31,124 @@ def sanitize_filename(name: str) -> str:
     return re.sub(r"_+", "_", s).strip("_")
 
 
+def sanitize_mac(mac: str) -> str:
+    """Sanitize MAC address for safe identifier usage."""
+    return re.sub(r"[^a-fA-F0-9]", "", mac or "").lower()
+
+
+def write_feeder_secrets_sync(
+    config_dir_or_path: str | Path,
+    mac: str,
+    secrets_dict: dict[str, str],
+    secrets_path: str | Path | None = None,
+) -> Path:
+    """Synchronously write or merge feeder secrets into secrets.yaml with mode 0600."""
+    if secrets_path:
+        target_path = Path(secrets_path)
+    else:
+        base_dir = Path(config_dir_or_path)
+        esphome_dir = base_dir / "esphome"
+        if esphome_dir.exists():
+            target_path = esphome_dir / "secrets.yaml"
+        else:
+            target_path = base_dir / "secrets.yaml"
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    existing_secrets: dict[str, Any] = {}
+    if target_path.is_file() and target_path.stat().st_size > 0:
+        # 1. Create a timestamped backup before touching existing secrets
+        ts = int(time.time())
+        bak_path = target_path.with_name(f"{target_path.name}.bak_{ts}")
+        try:
+            shutil.copy2(target_path, bak_path)
+            os.chmod(bak_path, 0o600)
+        except OSError as err:
+            _LOGGER.warning("Could not create backup of %s: %s", target_path, err)
+
+        # 2. Safely parse existing YAML mapping
+        try:
+            with open(target_path, "r", encoding="utf-8") as f:
+                loaded = yaml.safe_load(f)
+                if isinstance(loaded, dict):
+                    existing_secrets = loaded
+                elif loaded is not None:
+                    _LOGGER.error("Existing secrets file %s is not a valid YAML mapping", target_path)
+                    raise ValueError(f"Existing {target_path} is not a valid YAML mapping")
+        except Exception as err:
+            _LOGGER.error(
+                "Failed to parse existing secrets from %s. Refusing to overwrite to prevent data loss: %s",
+                target_path,
+                err,
+            )
+            raise RuntimeError(
+                f"Cannot merge secrets: existing {target_path} is malformed or unparseable. Preserved backup at {bak_path}"
+            ) from err
+
+    clean_mac = sanitize_mac(mac)
+    for key, val in secrets_dict.items():
+        if clean_mac and not key.startswith(f"feeder_{clean_mac}_"):
+            full_key = f"feeder_{clean_mac}_{key}"
+        elif not clean_mac and not key.startswith("feeder_"):
+            full_key = f"feeder_{key}"
+        else:
+            full_key = key
+        existing_secrets[full_key] = val
+
+    # Ensure fallback unscoped keys for pawsync.yaml base package compilation
+    if "noise_psk" in secrets_dict and "api_encryption_key" not in existing_secrets:
+        existing_secrets["api_encryption_key"] = secrets_dict["noise_psk"]
+    if "ota_password" in secrets_dict and "ota_password" not in existing_secrets:
+        existing_secrets["ota_password"] = secrets_dict["ota_password"]
+    if "wifi_ssid" in secrets_dict and "wifi_ssid" not in existing_secrets:
+        existing_secrets["wifi_ssid"] = secrets_dict["wifi_ssid"]
+    if "wifi_password" in secrets_dict and "wifi_password" not in existing_secrets:
+        existing_secrets["wifi_password"] = secrets_dict["wifi_password"]
+
+    temp_fd, temp_path = tempfile.mkstemp(
+        dir=str(target_path.parent),
+        prefix="secrets_",
+        suffix=".yaml",
+    )
+    try:
+        with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
+            yaml.safe_dump(existing_secrets, f, default_flow_style=False, sort_keys=True)
+        os.chmod(temp_path, 0o600)
+        os.replace(temp_path, str(target_path))
+        os.chmod(str(target_path), 0o600)
+        _LOGGER.info("Non-destructively updated secrets in %s (mode 0600)", target_path)
+        return target_path
+    except Exception:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise
+
+
+async def async_write_feeder_secrets(
+    hass_or_config_dir: Any,
+    mac: str,
+    secrets_dict: dict[str, str],
+    secrets_path: str | Path | None = None,
+) -> Path:
+    """Non-destructively write MAC-scoped secrets to secrets.yaml with mode 0600."""
+    if hasattr(hass_or_config_dir, "config") and hasattr(hass_or_config_dir.config, "config_dir"):
+        config_dir = hass_or_config_dir.config.config_dir
+    elif isinstance(hass_or_config_dir, (str, Path)):
+        config_dir = str(hass_or_config_dir)
+    else:
+        config_dir = "/config"
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None,
+        write_feeder_secrets_sync,
+        config_dir,
+        mac,
+        secrets_dict,
+        secrets_path,
+    )
+
+
 def generate_esphome_yaml(
     device_name: str,
     friendly_name: str,
@@ -37,11 +160,23 @@ def generate_esphome_yaml(
     noise_psk: str | None = None,
     ota_password: str | None = None,
 ) -> str:
-    """Generate ESPHome YAML configuration referencing the remote package."""
+    """Generate ESPHome YAML configuration referencing the remote package and MAC-scoped secrets."""
     clean_name = sanitize_filename(device_name)
+    clean_mac = sanitize_mac(mac_address)
     mac_comment = f"# Device MAC: {mac_address}\n" if mac_address else ""
     key = noise_psk or generate_noise_psk()
     ota_pass = ota_password or generate_ota_password()
+
+    if clean_mac:
+        ssid_ref = f"!secret feeder_{clean_mac}_wifi_ssid"
+        pass_ref = f"!secret feeder_{clean_mac}_wifi_password"
+        key_ref = f"!secret feeder_{clean_mac}_noise_psk"
+        ota_ref = f"!secret feeder_{clean_mac}_ota_password"
+    else:
+        ssid_ref = f'"{wifi_ssid}"' if wifi_ssid else "!secret wifi_ssid"
+        pass_ref = f'"{wifi_password}"' if wifi_password else "!secret wifi_password"
+        key_ref = f'"{key}"' if key else "!secret api_encryption_key"
+        ota_ref = f'"{ota_pass}"' if ota_pass else "!secret ota_password"
 
     yaml_content = f"""# Auto-provisioned by PawSync Home Assistant Integration
 {mac_comment}substitutions:
@@ -57,18 +192,21 @@ packages:
     refresh: 1d
 
 wifi:
-  ssid: "{wifi_ssid or '!secret wifi_ssid'}"
-  password: "{wifi_password or '!secret wifi_password'}"
+  ssid: {ssid_ref}
+  password: {pass_ref}
   fast_connect: true
   power_save_mode: none
+  ap:
+    ssid: "Pawsync-Feeder-Fallback"
+    password: "pawsync1234"
 
 api:
   encryption:
-    key: "{key}"
+    key: {key_ref}
 
 ota:
   - platform: esphome
-    password: "{ota_pass}"
+    password: {ota_ref}
 """
     return yaml_content
 
@@ -83,7 +221,7 @@ async def async_provision_esphome_yaml(
     noise_psk: str | None = None,
     ota_password: str | None = None,
 ) -> str | None:
-    """Write the generated YAML file to Home Assistant's /config/esphome/ directory."""
+    """Write the generated YAML file to Home Assistant's /config/esphome/ directory and persist secrets."""
     target_dir = os.path.join(hass_config_dir, "esphome")
     if not os.path.exists(target_dir):
         # If /config/esphome doesn't exist, try local config dir
@@ -92,14 +230,32 @@ async def async_provision_esphome_yaml(
     filename = f"{sanitize_filename(device_name)}.yaml"
     file_path = os.path.join(target_dir, filename)
 
+    key = noise_psk or generate_noise_psk()
+    ota_pass = ota_password or generate_ota_password()
+
+    # Persist secrets to secrets.yaml
+    try:
+        await async_write_feeder_secrets(
+            hass_config_dir,
+            mac=mac_address,
+            secrets_dict={
+                "wifi_ssid": wifi_ssid,
+                "wifi_password": wifi_password,
+                "noise_psk": key,
+                "ota_password": ota_pass,
+            },
+        )
+    except Exception as err:
+        _LOGGER.warning("Could not auto-write feeder secrets to secrets.yaml: %s", err)
+
     content = generate_esphome_yaml(
         device_name=device_name,
         friendly_name=friendly_name,
         wifi_ssid=wifi_ssid,
         wifi_password=wifi_password,
         mac_address=mac_address,
-        noise_psk=noise_psk,
-        ota_password=ota_password,
+        noise_psk=key,
+        ota_password=ota_pass,
     )
 
     try:
@@ -165,14 +321,6 @@ async def _advance_esphome_flow(hass: Any, flow_id: str, step_id: str | None, no
                 _LOGGER.info("ESPHome flow %s encryption result: %s", flow_id, res.get("type"))
                 if _is_flow_type(res, "create_entry", "abort"):
                     return True
-                if res.get("step_id") == "encryption_key" and noise_psk != TRANSITION_NOISE_PSK:
-                    _LOGGER.info("Retrying with TRANSITION_NOISE_PSK for flow %s...", flow_id)
-                    res = await hass.config_entries.flow.async_configure(
-                        flow_id,
-                        user_input={"noise_psk": TRANSITION_NOISE_PSK},
-                    )
-                    if _is_flow_type(res, "create_entry", "abort"):
-                        return True
                 step_id = res.get("step_id")
 
             elif step_id == "authenticate":
@@ -212,7 +360,7 @@ async def async_auto_adopt_esphome(
     Monitors network connectivity to port 6053 and auto-completes the ESPHome
     config flow with the pre-configured Noise PSK encryption key.
     """
-    effective_psk = noise_psk or TRANSITION_NOISE_PSK
+    effective_psk = noise_psk or ""
     _LOGGER.info("Starting automated ESPHome adoption monitor for host: %s (MAC: %s)", host, mac)
     clean_mac = mac.replace(":", "").replace("-", "").strip().lower() if mac else ""
 
@@ -247,17 +395,16 @@ async def async_auto_adopt_esphome(
                 flow_context = flow.get("context", {})
                 flow_uid = (flow_context.get("unique_id") or "").replace(":", "").replace("-", "").strip().lower()
                 
-                # Match by MAC, host, or if this is the only pending ESPHome flow
+                # Match strictly by MAC or host IP
                 match = (
                     (clean_mac and flow_uid and clean_mac in flow_uid)
                     or (clean_mac and clean_mac in str(flow).lower())
                     or (mac and mac.lower() in str(flow).lower())
                     or (host and host in str(flow))
-                    or len(progress_flows) == 1
                 )
                 if match and flow_id:
                     _LOGGER.info("Found matching in-progress ESPHome flow %s (step: %s)", flow_id, step_id)
-                    success = await _advance_esphome_flow(hass, flow_id, step_id, noise_psk)
+                    success = await _advance_esphome_flow(hass, flow_id, step_id, effective_psk)
                     if success:
                         return True
         except Exception as flow_err:

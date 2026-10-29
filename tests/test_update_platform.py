@@ -14,6 +14,7 @@ from custom_components.pawsync.espota_client import (
     RESPONSE_CHUNK_OK,
     RESPONSE_OK,
     RESPONSE_RECEIVE_OK,
+    RESPONSE_REQUEST_SHA256_AUTH,
     RESPONSE_UPDATE_END_OK,
     RESPONSE_UPDATE_PREPARE_OK,
     async_flash_esphome_ota,
@@ -240,4 +241,94 @@ def test_sanitize_firmware_binary():
     assert sanitized == pure_image
     assert len(sanitized) == len(pure_image)
     assert sanitized[0] == 0xE9
+
+
+@pytest.mark.asyncio
+async def test_esphome_ota_flasher_sha256_auth_protocol():
+    """Test ESPHome OTA password authentication handshake (SHA256 challenge-response)."""
+    payload = b"\xe9" + (b"SECURE_AUTH_FIRMWARE" * 50)
+    test_password = "MySecureOtaPass!"
+    auth_verified = False
+
+    async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        nonlocal auth_verified
+
+        # 1. Read magic bytes
+        magic = await reader.readexactly(5)
+        assert magic == MAGIC_BYTES
+
+        # 2. Respond version 2
+        writer.write(bytes([RESPONSE_OK, 0x02]))
+        await writer.drain()
+
+        # 3. Read client features
+        await reader.readexactly(1)
+        writer.write(bytes([0x46]))
+        await writer.drain()
+
+        # 4. Respond with Request SHA256 Auth + 64 hex byte nonce
+        server_nonce = "1234567890abcdef" * 4
+        writer.write(bytes([RESPONSE_REQUEST_SHA256_AUTH]) + server_nonce.encode("ascii"))
+        await writer.drain()
+
+        # Read 128 bytes (64B cnonce + 64B response)
+        auth_bytes = await reader.readexactly(128)
+        cnonce = auth_bytes[:64].decode("ascii")
+        client_hash = auth_bytes[64:].decode("ascii")
+
+        to_hash = test_password.encode("utf-8") + server_nonce.encode("ascii") + cnonce.encode("ascii")
+        expected_hash = hashlib.sha256(to_hash).hexdigest()
+        assert client_hash == expected_hash
+        auth_verified = True
+
+        # Send Auth OK
+        writer.write(bytes([RESPONSE_AUTH_OK]))
+        await writer.drain()
+
+        # Read size
+        await reader.readexactly(4)
+        writer.write(bytes([RESPONSE_UPDATE_PREPARE_OK]))
+        await writer.drain()
+
+        # Read MD5
+        await reader.readexactly(32)
+        writer.write(bytes([RESPONSE_BIN_MD5_OK]))
+        await writer.drain()
+
+        # Read chunks
+        remaining = len(payload)
+        while remaining > 0:
+            chunk = await reader.readexactly(min(8192, remaining))
+            remaining -= len(chunk)
+            writer.write(bytes([RESPONSE_CHUNK_OK]))
+            await writer.drain()
+
+        writer.write(bytes([RESPONSE_RECEIVE_OK, RESPONSE_UPDATE_END_OK]))
+        await writer.drain()
+        await reader.readexactly(1)
+
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(handle_client, "127.0.0.1", 0)
+    server_port = server.sockets[0].getsockname()[1]
+    server_task = asyncio.create_task(server.serve_forever())
+
+    try:
+        success = await async_flash_esphome_ota(
+            host="127.0.0.1",
+            firmware_binary=payload,
+            port=server_port,
+            ota_password=test_password,
+        )
+        assert success is True
+        assert auth_verified is True
+    finally:
+        server.close()
+        await server.wait_closed()
+        server_task.cancel()
+        try:
+            await server_task
+        except asyncio.CancelledError:
+            pass
 

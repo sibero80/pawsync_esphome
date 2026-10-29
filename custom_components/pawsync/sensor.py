@@ -157,9 +157,6 @@ class PawSyncStockBackupStatusSensor(SensorEntity):
                 "slot": status.get("slot"),
                 "version": status.get("version"),
             }
-            if not self._backup_in_progress and self._mac and host:
-                self._backup_in_progress = True
-                self.hass.async_create_task(self._async_trigger_backup(host, self._mac))
 
 
 class PawSyncAlternateSlotSensor(SensorEntity):

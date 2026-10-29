@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import secrets
 import time
 from typing import Callable
 
@@ -79,6 +80,7 @@ async def async_flash_esphome_ota(
     host: str,
     firmware_binary: bytes,
     port: int = OTA_PORT,
+    ota_password: str | None = None,
     noise_psk: str | None = None,
     on_progress: Callable[[float], None] | None = None,
     timeout: float = 30.0,
@@ -144,6 +146,24 @@ async def async_flash_esphome_ota(
 
         # 4. Auth check
         auth_resp = (await asyncio.wait_for(reader.readexactly(1), timeout=10.0))[0]
+        if auth_resp == RESPONSE_REQUEST_SHA256_AUTH:
+            if not ota_password:
+                _LOGGER.error("Device at %s requires OTA password, but none provided", host)
+                return False
+            # Read 64 hex bytes nonce
+            nonce_bytes = await asyncio.wait_for(reader.readexactly(64), timeout=10.0)
+            nonce = nonce_bytes.decode("ascii")
+            # Generate client nonce (64 hex characters)
+            cnonce = hashlib.sha256(secrets.token_bytes(32)).hexdigest()
+            # Calculate SHA256(password + nonce + cnonce)
+            to_hash = ota_password.encode("utf-8") + nonce.encode("ascii") + cnonce.encode("ascii")
+            resp_hash = hashlib.sha256(to_hash).hexdigest()
+            # Send cnonce + resp_hash (128 bytes total)
+            writer.write(cnonce.encode("ascii") + resp_hash.encode("ascii"))
+            await writer.drain()
+            # Server sends verification response
+            auth_resp = (await asyncio.wait_for(reader.readexactly(1), timeout=10.0))[0]
+
         if auth_resp != RESPONSE_AUTH_OK:
             err_desc = ERROR_MESSAGES.get(auth_resp, f"Auth code 0x{auth_resp:02X}")
             _LOGGER.error("Authentication rejected on %s: %s", host, err_desc)

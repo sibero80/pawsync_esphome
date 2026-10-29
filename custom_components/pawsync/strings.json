@@ -49,6 +49,14 @@
           "host": "Device IP Address or Hostname",
           "unit_system": "Preferred Unit System"
         }
+      },
+      "recovery": {
+        "title": "Feeder Adoption Recovery",
+        "description": "The feeder was flashed with ESPHome firmware, but Home Assistant has not yet established an encrypted connection with {feeder_name} (MAC: {mac}).\n\nRecovery options:\n1. Retry: Search again if the feeder is still rebooting.\n2. Manual IP: Enter the feeder's local IP address if your network uses separate VLANs or blocks mDNS.\n3. Fallback AP: If the feeder failed to connect to Wi-Fi, look for Wi-Fi network '{fallback_ssid}' (Password: '{fallback_password}') to reconfigure network credentials.\n4. Proceed: Finish setup now and let Home Assistant adopt the feeder later in the background.",
+        "data": {
+          "recovery_action": "Action",
+          "host": "Device IP Address (for Manual IP)"
+        }
       }
     },
     "progress": {
@@ -61,6 +69,9 @@
       "no_feeder_selected": "Please select at least one feeder to adopt.",
       "stager_failed": "Failed to initialize the local OTA stager server.",
       "ota_trigger_failed": "Failed to dispatch OTA conversion command to device via cloud relay.",
+      "cannot_connect_manual_ip": "Could not connect to ESPHome Native API on port 6053 at this IP address.",
+      "adoption_failed": "Auto-discovery timed out. The feeder may still be rebooting or connecting to Wi-Fi.",
+      "invalid_ip": "Please provide a valid IP address or hostname.",
       "unknown": "An unexpected error occurred. Check Home Assistant logs for details."
     },
     "abort": {

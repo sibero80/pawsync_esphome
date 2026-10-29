@@ -9,6 +9,7 @@ from custom_components.pawsync.const import (
     CONF_ONBOARDING_MODE,
     CONF_SELECTED_FEEDER,
     DOMAIN,
+    FLASH_METHOD_OTA,
     FLASH_METHOD_SKIP,
     MODE_CLOUD_ONBOARDING,
     MODE_DIRECT_ESPHOME,
@@ -207,3 +208,156 @@ async def test_prerequisites_manual_ip_input():
     assert res["type"] == "form"
     assert res["step_id"] == "flash_wizard"
     assert flow._selected_feeder_info["ip"] == "192.168.1.77"
+
+
+@pytest.mark.asyncio
+async def test_multi_feeder_unique_credentials_isolation():
+    """Verify multiple feeders receive unique, decoupled Noise PSK and OTA passwords (AC-7, AC-8)."""
+    # Feeder 1
+    flow1 = PawsyncConfigFlow()
+    flow1.hass = MagicMock()
+    flow1.hass.config.config_dir = "/tmp"
+    flow1._selected_feeder_cid = "cid_001"
+    flow1._selected_feeder_info = {
+        "cid": "cid_001",
+        "mac": "11:22:33:44:55:01",
+        "name": "Feeder 1",
+    }
+    flow1._wifi_ssid = "HomeWiFi"
+    flow1._wifi_password = "Password1"
+
+    res1 = await flow1.async_step_flash_wizard({"flash_method": FLASH_METHOD_SKIP})
+    psk1 = res1["data"]["noise_psk"]
+    ota1 = res1["data"]["ota_password"]
+
+    # Feeder 2
+    flow2 = PawsyncConfigFlow()
+    flow2.hass = MagicMock()
+    flow2.hass.config.config_dir = "/tmp"
+    flow2._selected_feeder_cid = "cid_002"
+    flow2._selected_feeder_info = {
+        "cid": "cid_002",
+        "mac": "11:22:33:44:55:02",
+        "name": "Feeder 2",
+    }
+    flow2._wifi_ssid = "HomeWiFi"
+    flow2._wifi_password = "Password1"
+
+    res2 = await flow2.async_step_flash_wizard({"flash_method": FLASH_METHOD_SKIP})
+    psk2 = res2["data"]["noise_psk"]
+    ota2 = res2["data"]["ota_password"]
+
+    # Ensure keys are strictly decoupled and never collide
+    assert psk1 != psk2
+    assert ota1 != ota2
+    assert len(psk1) == 44
+    assert len(psk2) == 44
+    assert len(ota1) == 16
+    assert len(ota2) == 16
+
+
+@pytest.mark.asyncio
+async def test_cloud_onboarding_recovery_redirect_and_retry():
+    """Verify failed adoption redirects to recovery step, and retry adopts feeder."""
+    flow = PawsyncConfigFlow()
+    flow.hass = MagicMock()
+    flow.hass.config.config_dir = "/tmp"
+    flow.hass.async_create_task = MagicMock(side_effect=lambda coro: asyncio.create_task(coro))
+
+    flow._selected_feeder_cid = "cid_cat_002"
+    flow._selected_feeder_info = {
+        "cid": "cid_cat_002",
+        "mac": "11:22:33:44:55:66",
+        "name": "Luna's Feeder",
+        "model": "PPF-R361S",
+        "ip": "192.168.1.102",
+        "noise_psk": "DUMMY_ORIGINAL_NOISE_PSK_KEY_44B___________=",
+    }
+    flow._wifi_ssid = "HomeNetwork"
+    flow._wifi_password = "Password123"
+
+    with patch.object(flow, "_async_convert_feeder_task", new=AsyncMock(return_value=None)):
+        await flow.async_step_flash_wizard({"flash_method": FLASH_METHOD_OTA})
+        await flow._ota_task
+
+        # Simulate adoption failure
+        flow._adoption_successful = False
+        res_done = await flow.async_step_ota_progress()
+        assert res_done["type"] == "progress_done"
+        assert res_done["next_step_id"] == "recovery"
+
+        # View recovery form
+        form = await flow.async_step_recovery()
+        assert form["type"] == "form"
+        assert form["step_id"] == "recovery"
+        assert form["description_placeholders"]["fallback_ssid"] == "Pawsync-Feeder-Fallback"
+        assert form["description_placeholders"]["fallback_password"] == "pawsync1234"
+
+        # Action: Retry with adoption success
+        with patch("custom_components.pawsync.config_flow.async_auto_adopt_esphome", new=AsyncMock(return_value=True)):
+            res_entry = await flow.async_step_recovery({"recovery_action": "retry"})
+            assert res_entry["type"] == "create_entry"
+            assert "Luna's Feeder" in res_entry["title"]
+            # Preserves original Noise PSK
+            assert res_entry["data"]["noise_psk"] == "DUMMY_ORIGINAL_NOISE_PSK_KEY_44B___________="
+
+
+@pytest.mark.asyncio
+async def test_cloud_onboarding_recovery_manual_ip():
+    """Verify manual IP input in recovery step adopts feeder and updates IP."""
+    flow = PawsyncConfigFlow()
+    flow.hass = MagicMock()
+    flow.hass.config.config_dir = "/tmp"
+
+    flow._selected_feeder_cid = "cid_cat_003"
+    flow._selected_feeder_info = {
+        "cid": "cid_cat_003",
+        "mac": "11:22:33:44:55:77",
+        "name": "Milo's Feeder",
+        "model": "PPF-R361S",
+        "ip": "192.168.1.50",
+    }
+    flow._wifi_ssid = "HomeNetwork"
+    flow._wifi_password = "Password123"
+
+    # 1. Manual IP with connection failure
+    with patch("custom_components.pawsync.config_flow.async_auto_adopt_esphome", new=AsyncMock(return_value=False)):
+        res_fail = await flow.async_step_recovery({
+            "recovery_action": "manual_ip",
+            "host": "192.168.10.200",
+        })
+        assert res_fail["type"] == "form"
+        assert res_fail["errors"]["base"] == "cannot_connect_manual_ip"
+
+    # 2. Manual IP with connection success
+    with patch("custom_components.pawsync.config_flow.async_auto_adopt_esphome", new=AsyncMock(return_value=True)):
+        res_ok = await flow.async_step_recovery({
+            "recovery_action": "manual_ip",
+            "host": "192.168.10.200",
+        })
+        assert res_ok["type"] == "create_entry"
+        assert res_ok["data"]["host"] == "192.168.10.200"
+
+
+@pytest.mark.asyncio
+async def test_cloud_onboarding_recovery_finish_anyway():
+    """Verify proceed without waiting creates config entry directly."""
+    flow = PawsyncConfigFlow()
+    flow.hass = MagicMock()
+    flow.hass.config.config_dir = "/tmp"
+
+    flow._selected_feeder_cid = "cid_cat_004"
+    flow._selected_feeder_info = {
+        "cid": "cid_cat_004",
+        "mac": "11:22:33:44:55:88",
+        "name": "Oliver's Feeder",
+        "model": "PPF-R361S",
+        "ip": "192.168.1.60",
+    }
+    flow._wifi_ssid = "HomeNetwork"
+    flow._wifi_password = "Password123"
+
+    res = await flow.async_step_recovery({"recovery_action": "finish_anyway"})
+    assert res["type"] == "create_entry"
+    assert "Oliver's Feeder" in res["title"]
+

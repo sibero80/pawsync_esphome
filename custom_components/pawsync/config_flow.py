@@ -38,11 +38,12 @@ from .const import (
     MODE_CLOUD_ONBOARDING,
     MODE_DIRECT_ESPHOME,
     generate_noise_psk,
+    generate_ota_password,
     UNIT_SYSTEM_IMPERIAL,
     UNIT_SYSTEM_METRIC,
-    TRANSITION_NOISE_PSK,
     VERSION,
 )
+from .backup_manager import save_cloud_backup
 from .esphome_provisioner import (
     async_auto_adopt_esphome,
     async_provision_esphome_yaml,
@@ -291,13 +292,12 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             feeder_name = self._selected_feeder_info.get("name", "Pawsync Feeder")
             mac_address = self._selected_feeder_info.get("mac", "")
             cid = self._selected_feeder_cid
-            if self._flash_method == FLASH_METHOD_OTA:
-                device_noise_psk = TRANSITION_NOISE_PSK
-            else:
-                device_noise_psk = self._selected_feeder_info.get("noise_psk") or generate_noise_psk()
+            device_noise_psk = self._selected_feeder_info.get("noise_psk") or generate_noise_psk()
+            device_ota_password = self._selected_feeder_info.get("ota_password") or generate_ota_password()
             self._selected_feeder_info["noise_psk"] = device_noise_psk
+            self._selected_feeder_info["ota_password"] = device_ota_password
 
-            # Automatically provision /config/esphome/ YAML
+            # Automatically provision /config/esphome/ YAML and secrets.yaml
             try:
                 await async_provision_esphome_yaml(
                     hass_config_dir=self.hass.config.config_dir,
@@ -307,6 +307,7 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     wifi_password=self._wifi_password,
                     mac_address=mac_address,
                     noise_psk=device_noise_psk,
+                    ota_password=device_ota_password,
                 )
             except Exception as err:
                 _LOGGER.warning("Could not auto-provision ESPHome YAML: %s", err)
@@ -343,7 +344,32 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         feeder_name = self._selected_feeder_info.get("name", "Pawsync Feeder")
         mac_address = self._selected_feeder_info.get("mac", "")
         cid = self._selected_feeder_cid
-        device_noise_psk = self._selected_feeder_info.get("noise_psk") or TRANSITION_NOISE_PSK
+        device_noise_psk = self._selected_feeder_info.get("noise_psk") or generate_noise_psk()
+        device_ota_password = self._selected_feeder_info.get("ota_password") or generate_ota_password()
+        self._selected_feeder_info["noise_psk"] = device_noise_psk
+        self._selected_feeder_info["ota_password"] = device_ota_password
+
+        # 0. Pre-flash cloud settings harvesting
+        session = async_get_clientsession(self.hass)
+        if self._cloud_auth.get(CONF_TOKEN):
+            try:
+                client = PawsyncApiClient(
+                    session=session,
+                    country_code=self._cloud_auth.get(CONF_COUNTRY_CODE, DEFAULT_COUNTRY_CODE),
+                    time_zone=self._cloud_auth.get(CONF_TIME_ZONE, DEFAULT_TIME_ZONE),
+                )
+                harvested = await client.async_harvest_feeder_profile(
+                    cid=cid,
+                    account_id=self._cloud_auth.get(CONF_ACCOUNT_ID),
+                    token=self._cloud_auth.get(CONF_TOKEN),
+                )
+                if harvested:
+                    await self.hass.async_add_executor_job(
+                        save_cloud_backup, self.hass, mac_address, harvested
+                    )
+                    self._selected_feeder_info["cloud_profile"] = harvested
+            except Exception as err:
+                _LOGGER.warning("Cloud profile harvest failed before conversion for %s: %s", cid, err)
 
         # 1. Prepare & patch firmware
         fw_path = await async_ensure_firmware_binary(
@@ -354,6 +380,8 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             firmware_path=fw_path,
             wifi_ssid=self._wifi_ssid,
             wifi_password=self._wifi_password,
+            noise_psk=device_noise_psk,
+            ota_password=device_ota_password,
         )
         download_url = await stager.async_start()
 
@@ -374,7 +402,7 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # 3. Wait for feeder to reboot and come online on home network (up to 120s)
         local_ip = self._selected_feeder_info.get("ip") or ""
-        await async_auto_adopt_esphome(
+        adopted = await async_auto_adopt_esphome(
             self.hass,
             host=local_ip,
             noise_psk=device_noise_psk,
@@ -389,6 +417,8 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             resolved = resolve_ip_from_mac(mac_address, hass=self.hass)
             if resolved:
                 self._selected_feeder_info["ip"] = resolved
+
+        self._adoption_successful = bool(adopted)
 
     async def async_step_ota_progress(
         self, user_input: dict[str, Any] | None = None
@@ -413,7 +443,11 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         err = self._ota_task.exception()
         if err:
             _LOGGER.error("OTA conversion error: %s", err)
-            return self.async_show_progress_done(next_step_id="ota_error")
+            return self.async_show_progress_done(next_step_id="recovery")
+
+        if not getattr(self, "_adoption_successful", True):
+            _LOGGER.warning("Auto-adoption did not succeed; redirecting to recovery step")
+            return self.async_show_progress_done(next_step_id="recovery")
 
         return self.async_show_progress_done(next_step_id="ota_finish")
 
@@ -423,19 +457,93 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Create config entry after successful conversion and network reappearance."""
         return self._create_feeder_entry()
 
+    async def async_step_recovery(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Handle conversion recovery: retry discovery, manual IP, or proceed anyway."""
+        errors: dict[str, str] = {}
+        feeder_name = self._selected_feeder_info.get("name", "Pawsync Feeder")
+        mac_address = self._selected_feeder_info.get("mac", "")
+        device_noise_psk = self._selected_feeder_info.get("noise_psk") or generate_noise_psk()
+        self._selected_feeder_info["noise_psk"] = device_noise_psk
+
+        if user_input is not None:
+            action = user_input.get("recovery_action", "retry")
+            manual_ip = (user_input.get("host") or "").strip()
+
+            if action == "manual_ip":
+                if not manual_ip:
+                    errors["host"] = "invalid_ip"
+                else:
+                    self._selected_feeder_info["ip"] = manual_ip
+                    adopted = await async_auto_adopt_esphome(
+                        self.hass,
+                        host=manual_ip,
+                        noise_psk=device_noise_psk,
+                        mac=mac_address,
+                        feeder_name=feeder_name,
+                        max_attempts=4,
+                        delay=1.0,
+                    )
+                    if adopted:
+                        return self._create_feeder_entry()
+                    errors["base"] = "cannot_connect_manual_ip"
+
+            elif action == "retry":
+                if manual_ip:
+                    self._selected_feeder_info["ip"] = manual_ip
+                target_ip = manual_ip or self._selected_feeder_info.get("ip") or ""
+                adopted = await async_auto_adopt_esphome(
+                    self.hass,
+                    host=target_ip,
+                    noise_psk=device_noise_psk,
+                    mac=mac_address,
+                    feeder_name=feeder_name,
+                    max_attempts=15,
+                    delay=2.0,
+                )
+                if adopted:
+                    return self._create_feeder_entry()
+                errors["base"] = "adoption_failed"
+
+            elif action == "finish_anyway":
+                if manual_ip:
+                    self._selected_feeder_info["ip"] = manual_ip
+                return self._create_feeder_entry()
+
+        recovery_schema = vol.Schema(
+            {
+                vol.Required("recovery_action", default="retry"): vol.In(
+                    {
+                        "retry": "Retry ESPHome Auto-Discovery",
+                        "manual_ip": "Adopt via Manual IP Address",
+                        "finish_anyway": "Proceed without Waiting for Adoption",
+                    }
+                ),
+                vol.Optional(
+                    "host",
+                    default=self._selected_feeder_info.get("ip") or "",
+                ): str,
+            }
+        )
+
+        return self.async_show_form(
+            step_id="recovery",
+            data_schema=recovery_schema,
+            errors=errors,
+            description_placeholders={
+                "feeder_name": feeder_name,
+                "mac": mac_address,
+                "fallback_ssid": "Pawsync-Feeder-Fallback",
+                "fallback_password": "pawsync1234",
+            },
+        )
+
     async def async_step_ota_error(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
         """Handle conversion error or timeout with recovery options."""
-        errors: dict[str, str] = {"base": "ota_trigger_failed"}
-        if user_input is not None:
-            return self._create_feeder_entry()
-
-        return self.async_show_form(
-            step_id="ota_error",
-            data_schema=vol.Schema({}),
-            errors=errors,
-        )
+        return await self.async_step_recovery(user_input)
 
     def _create_feeder_entry(self) -> config_entries.ConfigFlowResult:
         """Helper to create the config entry."""
@@ -443,7 +551,8 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         mac_address = self._selected_feeder_info.get("mac", "")
         cid = self._selected_feeder_cid
         local_ip = self._selected_feeder_info.get("ip") or ""
-        device_noise_psk = self._selected_feeder_info.get("noise_psk") or TRANSITION_NOISE_PSK
+        device_noise_psk = self._selected_feeder_info.get("noise_psk") or generate_noise_psk()
+        device_ota_password = self._selected_feeder_info.get("ota_password") or generate_ota_password()
 
         title = f"{feeder_name} ({mac_address or cid[:8]})"
         entry_data = {
@@ -453,6 +562,8 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_SELECTED_FEEDER: cid,
             "feeder_info": self._selected_feeder_info,
             "noise_psk": device_noise_psk,
+            "ota_password": device_ota_password,
+            "cloud_profile": self._selected_feeder_info.get("cloud_profile"),
             CONF_FLASH_METHOD: self._flash_method,
             CONF_SSID: self._wifi_ssid,
             CONF_HOST: local_ip,

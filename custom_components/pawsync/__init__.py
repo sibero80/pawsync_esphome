@@ -17,7 +17,6 @@ from .const import (
     CONF_HOST,
     CONF_SELECTED_FEEDER,
     DOMAIN,
-    TRANSITION_NOISE_PSK,
     generate_noise_psk,
 )
 from .esphome_provisioner import async_auto_adopt_esphome
@@ -118,7 +117,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # 3. Trigger automated ESPHome background adoption if host is known
     if host:
         if not device_noise_psk:
-            device_noise_psk = TRANSITION_NOISE_PSK
+            device_noise_psk = generate_noise_psk()
             hass.config_entries.async_update_entry(
                 entry,
                 data={**entry.data, "noise_psk": device_noise_psk},
@@ -143,6 +142,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
         )
 
+    # 4b. Trigger post-adoption cloud settings restoration if cloud profile/backup exists and not yet restored
+    if mac and not entry.data.get("cloud_profile_restored", False):
+        from .restore_manager import async_restore_cloud_settings
+        hass.async_create_task(
+            async_restore_cloud_settings(
+                hass=hass,
+                entry=entry,
+            )
+        )
+
     # 5. Forward setup to platforms (e.g. Firmware Update and Diagnostic Sensors)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -164,4 +173,16 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if DOMAIN in hass.data and entry.entry_id in hass.data[DOMAIN]:
         hass.data[DOMAIN].pop(entry.entry_id)
         _LOGGER.info("Unloaded PawSync config entry for %s", entry.title)
+
+    # Clean up any leftover temporary customized firmware on unload
+    try:
+        from .firmware_downloader import get_firmware_cache_dir
+        cache_dir = get_firmware_cache_dir(hass)
+        custom_fw = os.path.join(cache_dir, "pawsync_ota_customized.bin")
+        if os.path.exists(custom_fw):
+            os.remove(custom_fw)
+            _LOGGER.debug("Removed temporary customized firmware on unload: %s", custom_fw)
+    except Exception as clean_err:
+        _LOGGER.debug("Could not clean up temporary customized firmware on unload: %s", clean_err)
+
     return unload_ok

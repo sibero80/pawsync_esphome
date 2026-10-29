@@ -19,6 +19,7 @@ if "homeassistant" not in sys.modules:
                 "step_id": step_id,
                 "data_schema": data_schema,
                 "errors": errors or {},
+                "description_placeholders": description_placeholders or {},
             }
 
         def async_create_entry(self, title, data, description=None, description_placeholders=None):
@@ -56,6 +57,7 @@ if "homeassistant" not in sys.modules:
                 "step_id": step_id,
                 "data_schema": data_schema,
                 "errors": errors or {},
+                "description_placeholders": description_placeholders or {},
             }
 
         def async_create_entry(self, title, data):

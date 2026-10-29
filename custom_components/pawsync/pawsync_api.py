@@ -593,3 +593,190 @@ class PawsyncApiClient:
                 "raw": dev,
             })
         return normalized
+
+    async def async_harvest_feeder_profile(
+        self,
+        cid: str,
+        account_id: str | None = None,
+        token: str | None = None,
+    ) -> dict[str, Any]:
+        """Harvest rich device configuration, portion calibration, and meal schedules."""
+        acc_id = account_id or self.account_id or ""
+        tok = token or self.token or ""
+        trace_id = generate_trace_id()
+
+        profile: dict[str, Any] = {
+            "cid": cid,
+            "harvested_at": int(time.time()),
+            "single_weight_g": 10.0,
+            "intelligent_feeding": False,
+            "slow_feed": False,
+            "sleep_mode": False,
+            "bucket_surplus": 0,
+            "plans": [],
+            "raw_properties": {},
+        }
+
+        # 1. Fetch device properties via deviceList4Pet
+        endpoint_dev = f"{PAWSYNC_API_BASE}/pet/api/deviceManaged/v1/deviceList4Pet"
+        payload_dev = {
+            "context": {
+                "traceId": trace_id,
+                "method": "deviceList4Pet",
+                "token": tok,
+                "accountID": acc_id,
+                "timeZone": self.time_zone,
+                "userCountryCode": self.country_code,
+                "acceptLanguage": "en",
+                "debugMode": False,
+                "osInfo": "Android 14",
+                "clientType": "pawsync",
+                "clientVersion": "1.1.32",
+                "terminalId": hashlib.md5(acc_id.encode("utf-8")).hexdigest() if acc_id else "",
+                "clientInfo": "pawsync",
+                "appID": "psybfyca",
+                "appVersion": "1.1.32",
+                "phoneOS": "Android 14",
+                "phoneBrand": "Android",
+            },
+            "data": {},
+        }
+        headers = {
+            "Content-Type": "application/json; charset=UTF-8",
+            "User-Agent": "okhttp/3.14.9",
+            "traceId": trace_id,
+            "bizType": "pet",
+            "accountID": acc_id,
+            "token": tok,
+        }
+
+        session = await self._get_session()
+        try:
+            async with session.post(
+                endpoint_dev,
+                json=payload_dev,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get("code") == 0 and "result" in data:
+                        raw_list = data["result"]
+                        if isinstance(raw_list, dict):
+                            raw_list = raw_list.get("list", [])
+                        for dev in raw_list:
+                            dev_cid = dev.get("cid") or dev.get("deviceId") or dev.get("uuid") or ""
+                            if dev_cid == cid or not cid:
+                                prop = dev.get("deviceProp") if isinstance(dev.get("deviceProp"), dict) else {}
+                                profile["raw_properties"] = prop
+                                if "singleWeight_g" in prop:
+                                    profile["single_weight_g"] = float(prop["singleWeight_g"])
+                                if "intelligentFeedingSwitch" in prop:
+                                    profile["intelligent_feeding"] = bool(prop["intelligentFeedingSwitch"])
+                                if "slowFeedSwitch" in prop:
+                                    profile["slow_feed"] = bool(prop["slowFeedSwitch"])
+                                if "sleepMode" in prop:
+                                    profile["sleep_mode"] = bool(prop["sleepMode"])
+                                pet_food = prop.get("petFood") if isinstance(prop.get("petFood"), dict) else {}
+                                if "bucketSurplus" in pet_food:
+                                    profile["bucket_surplus"] = pet_food["bucketSurplus"]
+                                break
+        except Exception as err:
+            _LOGGER.warning("Could not harvest device details for %s: %s", cid, err)
+
+        # 2. Query getFeedingPlanList
+        endpoint_plan_list = f"{PAWSYNC_API_BASE}/pet/api/deviceManaged/v1/getFeedingPlanList"
+        payload_plan_list = {
+            "context": {
+                "traceId": generate_trace_id(),
+                "method": "getFeedingPlanList",
+                "token": tok,
+                "accountID": acc_id,
+                "timeZone": self.time_zone,
+                "userCountryCode": self.country_code,
+                "acceptLanguage": "en",
+                "debugMode": False,
+                "osInfo": "Android 14",
+                "clientType": "pawsync",
+                "clientVersion": "1.1.32",
+                "terminalId": hashlib.md5(acc_id.encode("utf-8")).hexdigest() if acc_id else "",
+                "clientInfo": "pawsync",
+                "appID": "psybfyca",
+                "appVersion": "1.1.32",
+                "phoneOS": "Android 14",
+                "phoneBrand": "Android",
+            },
+            "data": {"cid": cid, "subDeviceNo": 0},
+        }
+
+        plan_ids: list[Any] = []
+        try:
+            async with session.post(
+                endpoint_plan_list,
+                json=payload_plan_list,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get("code") == 0 and "result" in data:
+                        res = data["result"]
+                        raw_plans = res.get("list", []) if isinstance(res, dict) else res
+                        for p in raw_plans:
+                            if isinstance(p, dict):
+                                plan_id = p.get("planId") or p.get("id")
+                                if plan_id:
+                                    plan_ids.append(plan_id)
+                                profile["plans"].append(p)
+        except Exception as err:
+            _LOGGER.warning("Could not harvest feeding plan list for %s: %s", cid, err)
+
+        # 3. Query getFeedingPlanDetail for details if plans found
+        for pid in plan_ids:
+            endpoint_detail = f"{PAWSYNC_API_BASE}/pet/api/deviceManaged/v1/getFeedingPlanDetail"
+            payload_detail = {
+                "context": {
+                    "traceId": generate_trace_id(),
+                    "method": "getFeedingPlanDetail",
+                    "token": tok,
+                    "accountID": acc_id,
+                    "timeZone": self.time_zone,
+                    "userCountryCode": self.country_code,
+                    "acceptLanguage": "en",
+                    "debugMode": False,
+                    "osInfo": "Android 14",
+                    "clientType": "pawsync",
+                    "clientVersion": "1.1.32",
+                    "terminalId": hashlib.md5(acc_id.encode("utf-8")).hexdigest() if acc_id else "",
+                    "clientInfo": "pawsync",
+                    "appID": "psybfyca",
+                    "appVersion": "1.1.32",
+                    "phoneOS": "Android 14",
+                    "phoneBrand": "Android",
+                },
+                "data": {"cid": cid, "planId": pid},
+            }
+            try:
+                async with session.post(
+                    endpoint_detail,
+                    json=payload_detail,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data.get("code") == 0 and "result" in data:
+                            detail = data["result"]
+                            for existing_p in profile["plans"]:
+                                if existing_p.get("planId") == pid or existing_p.get("id") == pid:
+                                    existing_p["detail"] = detail
+            except Exception as err:
+                _LOGGER.warning("Could not harvest plan detail %s for %s: %s", pid, cid, err)
+
+        _LOGGER.info(
+            "Harvested cloud profile for %s: singleWeight_g=%.1f, %d plans",
+            cid,
+            profile["single_weight_g"],
+            len(profile["plans"]),
+        )
+        return profile

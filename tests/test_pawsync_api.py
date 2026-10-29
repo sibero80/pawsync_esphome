@@ -199,3 +199,106 @@ def test_resolve_ip_from_mac_arp_cli(monkeypatch):
          patch("subprocess.run", return_value=mock_proc):
         ip = resolve_ip_from_mac("33:44:55:66:77:88")
         assert ip == "192.168.1.160"
+
+
+@pytest.mark.asyncio
+async def test_async_harvest_feeder_profile_success():
+    """Verify pre-flash harvesting fetches device properties, switches, and meal plans."""
+    client = PawsyncApiClient()
+    client.account_id = "test_acc_123"
+    client.token = "test_tok_456"
+
+    dev_list_resp = {
+        "code": 0,
+        "result": {
+            "list": [
+                {
+                    "cid": "cid_feeder_1",
+                    "deviceProp": {
+                        "singleWeight_g": 8.5,
+                        "intelligentFeedingSwitch": True,
+                        "slowFeedSwitch": True,
+                        "sleepMode": False,
+                        "petFood": {"bucketSurplus": 1800},
+                    },
+                }
+            ]
+        },
+    }
+
+    plan_list_resp = {
+        "code": 0,
+        "result": {
+            "list": [
+                {"planId": 101, "planName": "Standard Plan"},
+            ]
+        },
+    }
+
+    plan_detail_resp = {
+        "code": 0,
+        "result": {
+            "meals": [
+                {"timeSec": 28800, "weight": 16, "repeat": 127},
+                {"timeSec": 64800, "weight": 24, "repeat": 127},
+            ]
+        },
+    }
+
+    class MockResp:
+        def __init__(self, data):
+            self._data = data
+            self.status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def json(self):
+            return self._data
+
+    def post_side_effect(url, **kwargs):
+        if "deviceList4Pet" in url:
+            return MockResp(dev_list_resp)
+        elif "getFeedingPlanList" in url:
+            return MockResp(plan_list_resp)
+        elif "getFeedingPlanDetail" in url:
+            return MockResp(plan_detail_resp)
+        return MockResp({})
+
+    mock_session = MagicMock()
+    mock_session.post.side_effect = post_side_effect
+    client._session = mock_session
+
+    profile = await client.async_harvest_feeder_profile(cid="cid_feeder_1")
+
+    assert profile["cid"] == "cid_feeder_1"
+    assert profile["single_weight_g"] == 8.5
+    assert profile["intelligent_feeding"] is True
+    assert profile["slow_feed"] is True
+    assert profile["bucket_surplus"] == 1800
+    assert len(profile["plans"]) == 1
+    assert profile["plans"][0]["planId"] == 101
+    assert profile["plans"][0]["detail"]["meals"][0]["timeSec"] == 28800
+
+
+@pytest.mark.asyncio
+async def test_async_harvest_feeder_profile_failure_fallback():
+    """Verify non-blocking fallback to default values on cloud API errors."""
+    client = PawsyncApiClient()
+    client.account_id = "test_acc"
+    client.token = "test_tok"
+
+    mock_session = MagicMock()
+    mock_session.post.side_effect = Exception("Cloud connection timed out")
+    client._session = mock_session
+
+    # Must NOT raise exception; returns safe defaults
+    profile = await client.async_harvest_feeder_profile(cid="cid_feeder_fail")
+
+    assert profile["cid"] == "cid_feeder_fail"
+    assert profile["single_weight_g"] == 10.0
+    assert profile["intelligent_feeding"] is False
+    assert profile["plans"] == []

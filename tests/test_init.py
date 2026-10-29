@@ -129,3 +129,55 @@ async def test_async_unload_entry():
     unloaded = await async_unload_entry(hass, entry)
     assert unloaded is True
     assert "entry_to_unload" not in hass.data[DOMAIN]
+
+
+@pytest.mark.asyncio
+async def test_async_setup_entry_skips_restore_when_already_restored():
+    """Verify cloud settings restoration is skipped if already restored."""
+    hass = MagicMock()
+    hass.data = {}
+    hass.config.path.return_value = "/tmp/pawsync_test_www"
+    hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
+    hass.config_entries.async_forward_entry_setups = AsyncMock(return_value=True)
+
+    entry = MagicMock()
+    entry.entry_id = "test_entry_already_restored"
+    entry.title = "Fluffy's Feeder"
+    entry.data = {
+        CONF_HOST: "192.168.1.55",
+        "noise_psk": "uNIQUEkEY1234567890123456789012345678901234=",
+        "feeder_info": {"name": "Fluffy's Feeder", "mac": "11:22:33:44:55:66"},
+        "cloud_profile_restored": True,
+    }
+    entry.options = {}
+
+    with patch("custom_components.pawsync.restore_manager.async_restore_cloud_settings") as mock_restore:
+        success = await async_setup_entry(hass, entry)
+        assert success is True
+        mock_restore.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_async_setup_entry_triggers_restore_when_not_restored():
+    """Verify cloud settings restoration is triggered if not yet marked restored."""
+    hass = MagicMock()
+    hass.data = {}
+    hass.config.path.return_value = "/tmp/pawsync_test_www"
+    hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
+    hass.config_entries.async_forward_entry_setups = AsyncMock(return_value=True)
+
+    entry = MagicMock()
+    entry.entry_id = "test_entry_needs_restore"
+    entry.title = "Fluffy's Feeder"
+    entry.data = {
+        CONF_HOST: "192.168.1.55",
+        "noise_psk": "uNIQUEkEY1234567890123456789012345678901234=",
+        "feeder_info": {"name": "Fluffy's Feeder", "mac": "11:22:33:44:55:66"},
+        "cloud_profile_restored": False,
+    }
+    entry.options = {}
+
+    with patch("custom_components.pawsync.restore_manager.async_restore_cloud_settings") as mock_restore:
+        success = await async_setup_entry(hass, entry)
+        assert success is True
+        mock_restore.assert_called_once_with(hass=hass, entry=entry)

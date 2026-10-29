@@ -2,7 +2,7 @@
 
 DOMAIN = "pawsync"
 NAME = "Pawsync Smart Pet Feeder"
-VERSION = "1.4.4"
+VERSION = "1.5.0"
 
 # Cloud API Endpoints
 PAWSYNC_API_BASE = "https://smartapi.pawsync.com"
@@ -34,7 +34,7 @@ FLASH_METHOD_SKIP = "manual_skip"
 # Frontend / Card
 CARD_FILENAME = "pawsync-feeder-card.js"
 CARD_URL_PATH = "/pawsync/pawsync-feeder-card.js"
-CARD_VERSION = "1.4.4"
+CARD_VERSION = "1.5.0"
 
 # Unit System Preferences
 CONF_UNIT_SYSTEM = "unit_system"
@@ -54,9 +54,6 @@ MAX_FIRMWARE_SIZE = 1310720  # 1.25 MB (0x140000)
 # Default Defaults
 DEFAULT_COUNTRY_CODE = "US"
 DEFAULT_TIME_ZONE = "America/New_York"
-# Transition Noise PSK: Used by the pre-compiled pawsync_ota_update.bin transition container
-TRANSITION_NOISE_PSK = "OjRSzAh3ADVkNjmBs5+K6GnOY0tGoSqlniJvsmolVeE="
-DEFAULT_NOISE_PSK = TRANSITION_NOISE_PSK
 
 # Factory Backup & Recovery Constants
 BACKUP_HTTP_PORT = 8088
@@ -74,8 +71,10 @@ def generate_noise_psk() -> str:
     return base64.b64encode(secrets.token_bytes(32)).decode("ascii")
 
 
-def generate_ota_password() -> str:
-    """Generate a secure random OTA password for new device installations."""
+def generate_ota_password(length: int = 16) -> str:
+    """Generate a secure random alphanumeric OTA password for new device installations."""
     import secrets
-    return secrets.token_urlsafe(16)
+    import string
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
 

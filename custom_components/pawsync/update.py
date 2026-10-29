@@ -250,9 +250,11 @@ class PawSyncFirmwareUpdateEntity(UpdateEntity):
                 self.async_write_ha_state()
 
             device_noise_psk = self._entry.data.get("noise_psk") or generate_noise_psk()
+            device_ota_password = self._entry.data.get("ota_password")
             success = await async_flash_esphome_ota(
                 host=host,
                 firmware_binary=firmware_binary,
+                ota_password=device_ota_password,
                 noise_psk=device_noise_psk,
                 on_progress=_on_progress,
             )

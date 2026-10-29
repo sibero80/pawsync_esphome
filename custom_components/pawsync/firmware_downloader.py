@@ -7,6 +7,7 @@ Provides dynamic on-demand retrieval of the verified VeSync OTA container
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import shutil
@@ -25,6 +26,25 @@ OTA_BINARY_FILENAME = "pawsync_ota_update.bin"
 MIN_CONTAINER_SIZE = 500_000
 MAX_CONTAINER_SIZE = 1_310_720  # Partition limit: 0x140000 bytes
 CONTAINER_MAGIC_BYTE = 0x01
+
+# Pinned release digests: maps release tag / version to expected sha256 hex digest
+EXPECTED_FIRMWARE_DIGESTS: dict[str, str] = {
+    "1.5.0": "d499f27d636d2be95cc078c9b87f2e04d13c8b5074d86f954fdb293fd4730164",
+    "1.5.0-beta": "d499f27d636d2be95cc078c9b87f2e04d13c8b5074d86f954fdb293fd4730164",
+}
+
+
+def verify_firmware_digest(content: bytes, expected_digest: str) -> bool:
+    """Verify that firmware content matches expected SHA-256 digest."""
+    clean_expected = expected_digest.lower().removeprefix("sha256:")
+    actual = hashlib.sha256(content).hexdigest().lower()
+    return actual == clean_expected
+
+
+def get_firmware_cache_dir(hass: HomeAssistant) -> str:
+    """Return the directory path where firmware containers are cached."""
+    config_dir = getattr(hass.config, "config_dir", "/config") or "/config"
+    return os.path.join(config_dir, ".storage", "pawsync")
 
 
 def get_local_firmware_candidates(hass: HomeAssistant) -> list[str]:
@@ -58,9 +78,9 @@ def validate_firmware_container(path: str, require_patchable: bool = False) -> b
 
         if require_patchable:
             from .firmware_patcher import can_patch_firmware
-            if not can_patch_firmware(content):
+            if not can_patch_firmware(content, require_psk=True, require_ota=True):
                 _LOGGER.info(
-                    "Candidate %s lacks dynamic Wi-Fi placeholders; discarding stale cache",
+                    "Candidate %s lacks dynamic placeholders; discarding stale cache",
                     path,
                 )
                 return False
@@ -76,15 +96,31 @@ async def async_ensure_firmware_binary(
     version: str | None = None,
     session: aiohttp.ClientSession | None = None,
     require_patchable: bool = False,
+    expected_digest: str | None = None,
 ) -> str:
     """Ensure a verified firmware container is available locally.
 
     Searches local storage paths first. If not present, stale, or invalid, downloads
     the verified binary from the official upstream repository (sibero80/pawsync_ota).
+    Enforces optional or pinned SHA-256 digest checks.
     """
+    clean_v = version.lstrip("v") if version else None
+    pinned_digest = expected_digest or (EXPECTED_FIRMWARE_DIGESTS.get(clean_v) if clean_v else None)
+
     # 1. Check local candidates
     for candidate in get_local_firmware_candidates(hass):
         if validate_firmware_container(candidate, require_patchable=require_patchable):
+            if pinned_digest:
+                try:
+                    with open(candidate, "rb") as f:
+                        cand_content = f.read()
+                    if not verify_firmware_digest(cand_content, pinned_digest):
+                        _LOGGER.warning("Local candidate %s failed SHA-256 verification", candidate)
+                        continue
+                except Exception as err:
+                    _LOGGER.debug("Could not verify candidate %s hash: %s", candidate, err)
+                    continue
+
             _LOGGER.info("Using local firmware container: %s (%d bytes)", candidate, os.path.getsize(candidate))
             return candidate
         elif os.path.exists(candidate) and require_patchable:
@@ -104,7 +140,6 @@ async def async_ensure_firmware_binary(
     # 2. Determine download URLs
     urls: list[str] = []
     if version:
-        clean_v = version.lstrip("v")
         urls.append(f"https://github.com/{DEFAULT_OTA_REPO}/releases/download/v{clean_v}/{OTA_BINARY_FILENAME}")
         urls.append(f"https://github.com/{DEFAULT_OTA_REPO}/releases/download/{clean_v}/{OTA_BINARY_FILENAME}")
     urls.append(f"https://github.com/{DEFAULT_OTA_REPO}/releases/latest/download/{OTA_BINARY_FILENAME}")
@@ -149,6 +184,16 @@ async def async_ensure_firmware_binary(
                     )
                     continue
 
+                # Verify pinned SHA-256 digest
+                if pinned_digest and not verify_firmware_digest(content, pinned_digest):
+                    _LOGGER.error(
+                        "Firmware SHA-256 digest verification failed for %s (actual: %s, expected: %s)",
+                        url,
+                        hashlib.sha256(content).hexdigest(),
+                        pinned_digest,
+                    )
+                    raise HomeAssistantError("Firmware SHA-256 digest verification failed")
+
                 # Write to disk atomically
                 def _write_file():
                     temp_fd, temp_path = tempfile.mkstemp(dir=target_dir, prefix="pawsync_fw_")
@@ -171,6 +216,8 @@ async def async_ensure_firmware_binary(
                 )
                 return target_file
 
+        except HomeAssistantError:
+            raise
         except Exception as err:
             _LOGGER.debug("Download failed from %s: %s", url, err)
             last_error = err

@@ -18,7 +18,9 @@ from custom_components.pawsync.backup_manager import (
     get_backup_dir,
     get_backup_paths,
     has_valid_local_backup,
+    load_cloud_backup,
     sanitize_mac,
+    save_cloud_backup,
     strip_trailing_padding,
     validate_esp_idf_image,
     validate_nvs_calibration,
@@ -609,8 +611,8 @@ async def test_update_platform_overwrite_protection_blocked(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_sensor_auto_triggers_backup_when_stock_intact():
-    """Verify PawSyncStockBackupStatusSensor automatically downloads backup when stock intact."""
+async def test_sensor_update_is_read_only_and_idempotent():
+    """Verify PawSyncStockBackupStatusSensor update is strictly read-only without side-effect tasks."""
     from custom_components.pawsync.sensor import PawSyncStockBackupStatusSensor
     from custom_components.pawsync.const import (
         BACKUP_STATUS_BACKED_UP,
@@ -620,7 +622,13 @@ async def test_sensor_auto_triggers_backup_when_stock_intact():
 
     mock_hass = MagicMock()
     mock_hass.async_add_executor_job = AsyncMock(return_value=False)
-    mock_hass.async_create_task = MagicMock()
+    tasks_created = []
+
+    def _capture_task(coro):
+        tasks_created.append(coro)
+        return MagicMock()
+
+    mock_hass.async_create_task = MagicMock(side_effect=_capture_task)
 
     entry = MagicMock()
     entry.entry_id = "test_entry_sensor"
@@ -652,34 +660,53 @@ async def test_sensor_auto_triggers_backup_when_stock_intact():
     mock_session = MagicMock()
     mock_session.get.return_value = MockResp({"stock_intact": True, "slot": "ota_1", "version": "v1.0.29"})
 
-    # Mock async_ensure_factory_backup
-    mock_backup_res = {
-        "status": BACKUP_STATUS_BACKED_UP,
-        "stock_size": 978688,
-        "cal_size": 16384,
-    }
-
-    tasks_created = []
-
-    def _capture_task(coro):
-        tasks_created.append(coro)
-        return MagicMock()
-
-    mock_hass.async_create_task = MagicMock(side_effect=_capture_task)
-
     with patch("custom_components.pawsync.sensor.async_get_clientsession", return_value=mock_session):
         with patch("custom_components.pawsync.sensor.has_valid_local_backup", return_value=False):
-            with patch("custom_components.pawsync.backup_manager.async_ensure_factory_backup", return_value=mock_backup_res):
-                # When async_update runs, it should discover stock_intact and schedule backup
-                await sensor.async_update()
-                assert sensor.native_value == BACKUP_STATUS_PENDING
-                assert sensor._backup_in_progress is True
-                assert len(tasks_created) == 1
+            # When async_update runs, it should discover status but perform zero write side-effects
+            await sensor.async_update()
+            assert sensor.native_value == BACKUP_STATUS_PENDING
+            assert sensor.extra_state_attributes["slot"] == "ota_1"
+            assert sensor.extra_state_attributes["version"] == "v1.0.29"
+            assert len(tasks_created) == 0, "Sensor async_update must not create background tasks"
 
-                # Clean up / await captured task
-                await tasks_created[0]
-                assert sensor.native_value == BACKUP_STATUS_BACKED_UP
-                assert sensor._backup_verified is True
-                assert sensor.extra_state_attributes["local_backup_verified"] is True
+
+def test_save_and_load_cloud_backup_json(tmp_path):
+    """Verify atomic saving and loading of pre-flash cloud backup JSON snapshot."""
+    profile_data = {
+        "cid": "test_device_cid_123",
+        "single_weight_g": 9.5,
+        "intelligent_feeding": True,
+        "slow_feed": True,
+        "bucket_surplus": 1250,
+        "plans": [
+            {
+                "planId": 1,
+                "name": "Daily Plan",
+                "detail": {
+                    "meals": [
+                        {"timeSec": 28800, "weight": 20, "repeat": 127},
+                        {"timeSec": 64800, "weight": 30, "repeat": 127},
+                    ]
+                },
+            }
+        ],
+    }
+
+    mac = "AA:BB:CC:99:88:77"
+    saved_file = save_cloud_backup(tmp_path, mac, profile_data)
+    assert saved_file.is_file()
+    assert os.stat(saved_file).st_mode & 0o777 == 0o600
+
+    loaded_data = load_cloud_backup(tmp_path, mac)
+    assert loaded_data is not None
+    assert loaded_data["cid"] == "test_device_cid_123"
+    assert loaded_data["single_weight_g"] == 9.5
+    assert loaded_data["intelligent_feeding"] is True
+    assert loaded_data["slow_feed"] is True
+    assert len(loaded_data["plans"]) == 1
+    assert len(loaded_data["plans"][0]["detail"]["meals"]) == 2
+
+    # Verify non-existent MAC returns None
+    assert load_cloud_backup(tmp_path, "00:00:00:00:00:00") is None
 
 

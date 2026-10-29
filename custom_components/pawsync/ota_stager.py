@@ -8,6 +8,7 @@ import logging
 import os
 import secrets
 import socket
+import tempfile
 import time
 from typing import Callable
 
@@ -80,6 +81,8 @@ class PawsyncOtaStager:
         on_complete: Callable[[], None] | None = None,
         wifi_ssid: str | None = None,
         wifi_password: str | None = None,
+        noise_psk: str | None = None,
+        ota_password: str | None = None,
     ) -> None:
         """Initialize the stager."""
         self.firmware_path = firmware_path
@@ -88,6 +91,8 @@ class PawsyncOtaStager:
         self.on_complete = on_complete
         self.wifi_ssid = wifi_ssid
         self.wifi_password = wifi_password
+        self.noise_psk = noise_psk
+        self.ota_password = ota_password
         self.token: str = secrets.token_hex(8)
         self.timeout_sec: float = 600.0  # 10 minutes auto-stop
         self._timeout_task: asyncio.Task | None = None
@@ -98,6 +103,7 @@ class PawsyncOtaStager:
         self._is_running = False
         self._transfer_started = False
         self._transfer_finished = False
+        self._customized_path: str | None = None
 
     def _compute_sha256(self) -> str:
         """Verify firmware binary exists, is valid, and compute its SHA-256."""
@@ -119,18 +125,23 @@ class PawsyncOtaStager:
 
     async def async_start(self) -> str:
         """Start the local staging HTTP server and return the download URL."""
-        if self.wifi_ssid:
+        if self.wifi_ssid or self.noise_psk or self.ota_password:
             from .firmware_patcher import prepare_customized_firmware_file
             stager_cache_dir = os.path.dirname(self.firmware_path) or tempfile.gettempdir()
             loop = asyncio.get_running_loop()
-            self.firmware_path = await loop.run_in_executor(
+            customized = await loop.run_in_executor(
                 None,
                 prepare_customized_firmware_file,
                 self.firmware_path,
                 stager_cache_dir,
                 self.wifi_ssid,
                 self.wifi_password,
+                self.noise_psk,
+                self.ota_password,
             )
+            if customized != self.firmware_path:
+                self._customized_path = customized
+                self.firmware_path = customized
 
         self.sha256 = self._compute_sha256()
         _LOGGER.info("Verified firmware binary: %s (SHA-256: %s)", self.firmware_path, self.sha256)
@@ -138,9 +149,6 @@ class PawsyncOtaStager:
         self._app = web.Application()
         tokenized_path = f"/firmware_{self.token}.bin"
         self._app.router.add_get(tokenized_path, self._handle_download)
-        # Retain standard paths for local development / testing
-        self._app.router.add_get("/firmware.bin", self._handle_download)
-        self._app.router.add_get("/pawsync_ota_update.bin", self._handle_download)
 
         self._runner = web.AppRunner(self._app)
         await self._runner.setup()
@@ -165,6 +173,12 @@ class PawsyncOtaStager:
                 for server in self._site._server.sockets:
                     self.port = server.getsockname()[1]
                     break
+
+        # Ensure dynamically assigned port is retrieved when binding to port 0
+        if self.port == 0 and self._site and self._site._server:
+            for server in self._site._server.sockets:
+                self.port = server.getsockname()[1]
+                break
 
         self._is_running = True
         url = f"http://{local_ip}:{self.port}{tokenized_path}"
@@ -196,11 +210,31 @@ class PawsyncOtaStager:
             await self._runner.cleanup()
             self._runner = None
         self._is_running = False
+
+        if self._customized_path and os.path.exists(self._customized_path):
+            try:
+                os.remove(self._customized_path)
+                _LOGGER.info("Deleted temporary customized firmware: %s", self._customized_path)
+            except OSError as err:
+                _LOGGER.warning("Could not delete customized firmware %s: %s", self._customized_path, err)
+            finally:
+                self._customized_path = None
+
         _LOGGER.info("Pawsync OTA Stager stopped")
 
     async def _handle_download(self, request: web.Request) -> web.StreamResponse:
         """Handle incoming download request from the stock feeder."""
         client_ip = request.remote or "unknown"
+        if self._transfer_started:
+            _LOGGER.warning(
+                "Rejecting duplicate download request from %s: stager is one-shot",
+                client_ip,
+            )
+            return web.Response(
+                status=410,
+                text="One-shot firmware download link has already been used or is in progress.\n",
+            )
+
         _LOGGER.info("Pawsync Feeder (%s) connected to download firmware", client_ip)
         self._transfer_started = True
 

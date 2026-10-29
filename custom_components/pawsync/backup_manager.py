@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from pathlib import Path
 import re
 import struct
+import tempfile
 from typing import Any
 
 import aiohttp
@@ -291,3 +293,65 @@ async def async_ensure_factory_backup(
     except Exception as err:
         _LOGGER.warning("Unexpected error during automated factory backup for %s: %s", host, err)
         return {"status": "error", "reason": str(err)}
+
+
+def save_cloud_backup(
+    hass_or_config_dir: Any,
+    mac: str,
+    profile_dict: dict[str, Any],
+) -> Path:
+    """Save cloud profile backup to /config/.storage/pawsync/cloud_backup_<mac>.json with mode 0600."""
+    if hasattr(hass_or_config_dir, "config") and hasattr(hass_or_config_dir.config, "config_dir"):
+        config_dir = hass_or_config_dir.config.config_dir
+    elif isinstance(hass_or_config_dir, (str, Path)):
+        config_dir = str(hass_or_config_dir)
+    else:
+        config_dir = "/config"
+
+    target_dir = Path(config_dir) / ".storage" / "pawsync"
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    clean_mac = sanitize_mac(mac)
+    backup_file = target_dir / f"cloud_backup_{clean_mac}.json"
+
+    temp_fd, temp_path = tempfile.mkstemp(
+        dir=str(target_dir),
+        prefix=f"cloud_backup_{clean_mac}_",
+        suffix=".json",
+    )
+    try:
+        with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
+            json.dump(profile_dict, f, indent=2)
+        os.chmod(temp_path, 0o600)
+        os.replace(temp_path, str(backup_file))
+        os.chmod(str(backup_file), 0o600)
+        _LOGGER.info("Saved cloud backup snapshot to %s (mode 0600)", backup_file)
+        return backup_file
+    except Exception:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise
+
+
+def load_cloud_backup(
+    hass_or_config_dir: Any,
+    mac: str,
+) -> dict[str, Any] | None:
+    """Load cloud profile backup from /config/.storage/pawsync/cloud_backup_<mac>.json."""
+    if hasattr(hass_or_config_dir, "config") and hasattr(hass_or_config_dir.config, "config_dir"):
+        config_dir = hass_or_config_dir.config.config_dir
+    elif isinstance(hass_or_config_dir, (str, Path)):
+        config_dir = str(hass_or_config_dir)
+    else:
+        config_dir = "/config"
+
+    clean_mac = sanitize_mac(mac)
+    backup_file = Path(config_dir) / ".storage" / "pawsync" / f"cloud_backup_{clean_mac}.json"
+    if not backup_file.is_file():
+        return None
+    try:
+        with open(backup_file, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as err:
+        _LOGGER.warning("Could not read cloud backup from %s: %s", backup_file, err)
+        return None

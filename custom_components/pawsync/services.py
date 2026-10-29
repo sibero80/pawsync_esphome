@@ -21,6 +21,7 @@ SERVICE_FEED = "feed"
 SERVICE_TARE_SCALE = "tare_scale"
 SERVICE_CALIBRATE = "calibrate_portion"
 SERVICE_RESTORE_STOCK = "restore_stock_firmware"
+SERVICE_RESTORE_CLOUD_BACKUP = "restore_cloud_backup"
 
 FEED_SCHEMA = vol.Schema(
     {
@@ -47,6 +48,13 @@ RESTORE_STOCK_SCHEMA = vol.Schema(
         vol.Required("confirm", default=False): cv.boolean,
         vol.Optional("host"): cv.string,
         vol.Optional("mac"): cv.string,
+    }
+)
+
+RESTORE_CLOUD_BACKUP_SCHEMA = vol.Schema(
+    {
+        vol.Optional("mac"): cv.string,
+        vol.Optional("entry_id"): cv.string,
     }
 )
 
@@ -149,9 +157,19 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             meta.get("version"),
         )
 
+        ota_password = None
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            feeder_info = entry.data.get("feeder_info", {})
+            entry_mac = (feeder_info.get("mac") or entry.data.get("mac_address") or "").replace(":", "").replace("-", "").lower()
+            clean_mac = (mac or "").replace(":", "").replace("-", "").lower()
+            if entry_mac and clean_mac and entry_mac == clean_mac:
+                ota_password = entry.data.get("ota_password")
+                break
+
         success = await async_flash_esphome_ota(
             host=host,
             firmware_binary=stock_bytes,
+            ota_password=ota_password,
         )
         if not success:
             raise HomeAssistantError(f"ESPHome OTA flash to {host}:3232 failed. Check logs for details.")
@@ -174,6 +192,37 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         else:
             _LOGGER.info("OTA transfer complete; feeder %s rebooted into stock firmware.", host)
 
+    async def async_handle_restore_cloud_backup(call: ServiceCall) -> None:
+        """Handle on-demand restoration of cloud backup settings."""
+        mac = call.data.get("mac")
+        entry_id = call.data.get("entry_id")
+
+        matched_entry = None
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            if entry_id and entry.entry_id == entry_id:
+                matched_entry = entry
+                break
+            if mac:
+                feeder_info = entry.data.get("feeder_info", {})
+                entry_mac = (feeder_info.get("mac") or entry.data.get("mac_address") or "").replace(":", "").replace("-", "").lower()
+                clean_mac = mac.replace(":", "").replace("-", "").lower()
+                if entry_mac and clean_mac and entry_mac == clean_mac:
+                    matched_entry = entry
+                    break
+
+        if not matched_entry:
+            entries = hass.config_entries.async_entries(DOMAIN)
+            if len(entries) == 1:
+                matched_entry = entries[0]
+            else:
+                raise HomeAssistantError("Could not resolve PawSync feeder entry. Please specify mac or entry_id.")
+
+        from .restore_manager import async_restore_cloud_settings
+        success = await async_restore_cloud_settings(hass, matched_entry)
+        if not success:
+            raise HomeAssistantError(f"Cloud settings restoration failed for {matched_entry.title}")
+        _LOGGER.info("Restored cloud backup settings for %s", matched_entry.title)
+
     if not hass.services.has_service(DOMAIN, SERVICE_FEED):
         hass.services.async_register(DOMAIN, SERVICE_FEED, async_handle_feed, schema=FEED_SCHEMA)
 
@@ -185,3 +234,11 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
     if not hass.services.has_service(DOMAIN, SERVICE_RESTORE_STOCK):
         hass.services.async_register(DOMAIN, SERVICE_RESTORE_STOCK, async_handle_restore_stock, schema=RESTORE_STOCK_SCHEMA)
+
+    if not hass.services.has_service(DOMAIN, SERVICE_RESTORE_CLOUD_BACKUP):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_RESTORE_CLOUD_BACKUP,
+            async_handle_restore_cloud_backup,
+            schema=RESTORE_CLOUD_BACKUP_SCHEMA,
+        )
