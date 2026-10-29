@@ -78,12 +78,16 @@ class PawsyncOtaStager:
         port: int = DEFAULT_STAGING_PORT,
         on_progress: Callable[[float, int, int], None] | None = None,
         on_complete: Callable[[], None] | None = None,
+        wifi_ssid: str | None = None,
+        wifi_password: str | None = None,
     ) -> None:
         """Initialize the stager."""
         self.firmware_path = firmware_path
         self.port = port
         self.on_progress = on_progress
         self.on_complete = on_complete
+        self.wifi_ssid = wifi_ssid
+        self.wifi_password = wifi_password
         self.token: str = secrets.token_hex(8)
         self.timeout_sec: float = 600.0  # 10 minutes auto-stop
         self._timeout_task: asyncio.Task | None = None
@@ -115,6 +119,19 @@ class PawsyncOtaStager:
 
     async def async_start(self) -> str:
         """Start the local staging HTTP server and return the download URL."""
+        if self.wifi_ssid:
+            from .firmware_patcher import prepare_customized_firmware_file
+            stager_cache_dir = os.path.dirname(self.firmware_path) or tempfile.gettempdir()
+            loop = asyncio.get_running_loop()
+            self.firmware_path = await loop.run_in_executor(
+                None,
+                prepare_customized_firmware_file,
+                self.firmware_path,
+                stager_cache_dir,
+                self.wifi_ssid,
+                self.wifi_password,
+            )
+
         self.sha256 = self._compute_sha256()
         _LOGGER.info("Verified firmware binary: %s (SHA-256: %s)", self.firmware_path, self.sha256)
 

@@ -316,7 +316,11 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if fw_path and self._cloud_auth.get(CONF_ACCOUNT_ID) and self._cloud_auth.get(CONF_TOKEN):
                     try:
                         session = async_get_clientsession(self.hass)
-                        stager = PawsyncOtaStager(firmware_path=fw_path)
+                        stager = PawsyncOtaStager(
+                            firmware_path=fw_path,
+                            wifi_ssid=self._wifi_ssid,
+                            wifi_password=self._wifi_password,
+                        )
                         download_url = await stager.async_start()
 
                         relay = VeSyncRelay(
