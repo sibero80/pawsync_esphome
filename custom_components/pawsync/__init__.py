@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 
+from .backup_manager import async_ensure_factory_backup
 from .cards import async_register_cards
 from .const import (
     CONF_HOST,
@@ -25,7 +26,7 @@ _LOGGER = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-PLATFORMS: list[Platform] = [Platform.UPDATE]
+PLATFORMS: list[Platform] = [Platform.UPDATE, Platform.SENSOR]
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
@@ -131,7 +132,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
         )
 
-    # 4. Forward setup to platforms (e.g. Firmware Update entity)
+    # 4. Trigger automated background factory stock backup if host and mac are known
+    if host and mac:
+        hass.async_create_task(
+            async_ensure_factory_backup(
+                hass=hass,
+                host=host,
+                mac=mac,
+            )
+        )
+
+    # 5. Forward setup to platforms (e.g. Firmware Update and Diagnostic Sensors)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # 5. Reload entry on options update (e.g. unit system switch or IP change)

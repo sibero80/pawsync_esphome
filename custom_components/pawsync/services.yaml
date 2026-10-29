@@ -52,3 +52,27 @@ calibrate_portion:
           step: 0.1
           unit_of_measurement: g
           mode: box
+
+restore_stock_firmware:
+  name: 1-Click Restore Factory Firmware
+  description: Over-the-air flash the saved genuine factory stock firmware binary back to the feeder via Port 3232, restoring original VeSync operation.
+  fields:
+    confirm:
+      name: Confirm Factory Restore
+      description: Must be set to true to execute factory firmware restore.
+      required: true
+      default: false
+      selector:
+        boolean:
+    host:
+      name: Host IP Address
+      description: Feeder IP address (optional, automatically discovered from integration if omitted).
+      required: false
+      selector:
+        text:
+    mac:
+      name: Feeder MAC Address
+      description: Feeder MAC address (optional, automatically discovered from integration if omitted).
+      required: false
+      selector:
+        text:

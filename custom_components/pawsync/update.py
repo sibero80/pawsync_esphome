@@ -18,9 +18,14 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .backup_manager import (
+    async_check_device_backup_status,
+    has_valid_local_backup,
+)
 from .const import CONF_HOST, CONF_SELECTED_FEEDER, DOMAIN, VERSION, generate_noise_psk
 from .espota_client import async_flash_esphome_ota, sanitize_firmware_binary
 from .esphome_provisioner import resolve_arp_ip
@@ -194,7 +199,30 @@ class PawSyncFirmwareUpdateEntity(UpdateEntity):
             self.async_write_ha_state()
             raise HomeAssistantError("Could not resolve IP address of the Pawsync feeder.")
 
-        # 2. Locate or dynamically download the firmware binary
+        # 2. Check Overwrite Protection Interlock
+        try:
+            session = async_get_clientsession(self.hass)
+            status = await async_check_device_backup_status(host, session)
+            if status.get("stock_intact") and not status.get("allow_overwrite"):
+                has_backup = False
+                if self._mac:
+                    has_backup = await self.hass.async_add_executor_job(
+                        has_valid_local_backup, self.hass, self._mac
+                    )
+                if not has_backup:
+                    self._attr_in_progress = False
+                    self.async_write_ha_state()
+                    raise HomeAssistantError(
+                        "Firmware update blocked: Alternate partition contains pristine factory stock firmware, "
+                        "no local backup exists, and 'Allow Overwriting Stock Slot' switch is OFF. "
+                        "Wait for automated factory backup to complete, or toggle ON 'Allow Overwriting Stock Slot'."
+                    )
+        except HomeAssistantError:
+            raise
+        except Exception as err:
+            _LOGGER.debug("Could not verify overwrite protection status on %s: %s", host, err)
+
+        # 3. Locate or dynamically download the firmware binary
         try:
             firmware_path = await async_ensure_firmware_binary(
                 self.hass, version=self.latest_version

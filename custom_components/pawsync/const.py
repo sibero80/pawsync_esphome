@@ -2,7 +2,7 @@
 
 DOMAIN = "pawsync"
 NAME = "Pawsync Smart Pet Feeder"
-VERSION = "1.1.1"
+VERSION = "1.3.0"
 
 # Cloud API Endpoints
 PAWSYNC_API_BASE = "https://smartapi.pawsync.com"
@@ -56,6 +56,14 @@ DEFAULT_COUNTRY_CODE = "US"
 DEFAULT_TIME_ZONE = "America/New_York"
 # Deprecated: Static legacy fallback retired in v1.1.3; all setups must use generate_noise_psk()
 DEFAULT_NOISE_PSK = None
+
+# Factory Backup & Recovery Constants
+BACKUP_HTTP_PORT = 8088
+DEFAULT_BACKUP_DIR = "pawsync_backups"
+BACKUP_STATUS_BACKED_UP = "backed_up"
+BACKUP_STATUS_PENDING = "pending"
+BACKUP_STATUS_SLOT_OVERWRITTEN = "slot_overwritten"
+BACKUP_STATUS_UNAVAILABLE = "unavailable"
 
 
 def generate_noise_psk() -> str:

@@ -16,10 +16,8 @@ secrets.yaml
 # Flash dumps and binary backups containing hardware/WiFi secrets
 *.dump
 dumps/
-esp32c3_dump.bin
-stock_factory_*.bin
-pawsync_factory_*.bin
-pawsync_ota_update.bin
+*.bin
+pawsync_backups/
 *.bin.bak
 
 # Editor and OS

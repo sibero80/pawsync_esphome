@@ -68,6 +68,7 @@ if "homeassistant" not in sys.modules:
     ha_const = MagicMock()
     class Platform:
         UPDATE = "update"
+        SENSOR = "sensor"
     ha_const.Platform = Platform
     sys.modules["homeassistant.const"] = ha_const
 
@@ -125,6 +126,40 @@ if "homeassistant" not in sys.modules:
     update_module.UpdateEntityFeature = UpdateEntityFeature
     update_module.UpdateEntity = UpdateEntity
     sys.modules["homeassistant.components.update"] = update_module
+
+    class SensorEntity:
+        _attr_has_entity_name = True
+        _attr_name = None
+        _attr_unique_id = None
+        _attr_device_info = None
+        _attr_native_value = None
+        _attr_icon = None
+        _attr_extra_state_attributes = None
+        _attr_entity_category = None
+
+        @property
+        def unique_id(self):
+            return self._attr_unique_id
+
+        @property
+        def native_value(self):
+            return self._attr_native_value
+
+        @property
+        def extra_state_attributes(self):
+            return self._attr_extra_state_attributes
+
+        def async_write_ha_state(self):
+            pass
+
+    sensor_module = MagicMock()
+    sensor_module.SensorEntity = SensorEntity
+    sys.modules["homeassistant.components.sensor"] = sensor_module
+
+    class EntityCategory:
+        DIAGNOSTIC = "diagnostic"
+        CONFIG = "config"
+    ha_const.EntityCategory = EntityCategory
 
     class DeviceInfo(dict):
         def __init__(self, **kwargs):

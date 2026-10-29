@@ -11,6 +11,11 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from .backup_manager import (
+    get_backup_paths,
+    strip_trailing_padding,
+    validate_esp_idf_image,
+)
 from .const import (
     CONF_ACCOUNT_ID,
     CONF_COUNTRY_CODE,
@@ -470,8 +475,40 @@ class PawsyncOptionsFlowHandler(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
         """Manage the options."""
+        errors: dict[str, str] = {}
+
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            # Handle manual stock backup file import if supplied
+            stock_file = (user_input.get("stock_backup_file_path") or "").strip()
+            if stock_file:
+                if not os.path.isfile(stock_file):
+                    errors["stock_backup_file_path"] = "file_not_found"
+                else:
+                    try:
+                        raw_data = await self.hass.async_add_executor_job(
+                            lambda: open(stock_file, "rb").read()
+                        )
+                        trimmed = strip_trailing_padding(raw_data)
+                        valid, err, _ = validate_esp_idf_image(trimmed)
+                        if not valid:
+                            errors["stock_backup_file_path"] = "invalid_esp_image"
+                        else:
+                            feeder_info = self.config_entry.data.get("feeder_info", {})
+                            mac = feeder_info.get("mac") or self.config_entry.data.get("mac_address") or "manual"
+                            stock_path, _ = get_backup_paths(self.hass, mac)
+
+                            def _save():
+                                stock_path.write_bytes(trimmed)
+                                os.chmod(stock_path, 0o600)
+
+                            await self.hass.async_add_executor_job(_save)
+                            _LOGGER.info("Manually imported stock firmware backup for %s (%d bytes)", mac, len(trimmed))
+                    except Exception as err:
+                        _LOGGER.error("Failed importing stock backup file: %s", err)
+                        errors["stock_backup_file_path"] = "import_failed"
+
+            if not errors:
+                return self.async_create_entry(title="", data=user_input)
 
         is_metric = getattr(self.hass.config.units, "is_metric", True) if hasattr(self.hass.config, "units") else True
         default_unit = self.config_entry.options.get(
@@ -483,6 +520,7 @@ class PawsyncOptionsFlowHandler(config_entries.OptionsFlow):
             self.config_entry.data.get(CONF_HOST, ""),
         )
         current_port = self.config_entry.options.get("stager_port", 8099)
+        current_backup_path = self.config_entry.options.get("stock_backup_file_path", "")
 
         data_schema = vol.Schema(
             {
@@ -496,10 +534,12 @@ class PawsyncOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional("stager_port", default=current_port): vol.All(
                     vol.Coerce(int), vol.Range(min=1024, max=65535)
                 ),
+                vol.Optional("stock_backup_file_path", default=current_backup_path): str,
             }
         )
 
         return self.async_show_form(
             step_id="init",
             data_schema=data_schema,
+            errors=errors,
         )
