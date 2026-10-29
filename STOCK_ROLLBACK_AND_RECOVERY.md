@@ -4,13 +4,24 @@
 > ### ⚠️ DISCLAIMER & TESTING NOTICE
 > This documentation and tools are provided "AS IS" for community testing. The authors take **no responsibility** for damaged hardware, bricked feeders, or voided warranties. Flashing custom firmware always carries risk. If an over-the-air update fails or bricks the unit, physical disassembly and a 3.3V USB-to-UART adapter are required to recover. **Always back up your full 4MB flash before flashing custom firmware.**
 
-This guide provides step-by-step instructions for safely rolling back the **Pawsync PPF-R361S Smart Pet Feeder** from ESPHome back to its original **factory stock firmware** (`ota_1` partition).
+This guide provides step-by-step instructions for safely rolling back the **Pawsync PPF-R361S Smart Pet Feeder** from ESPHome back to its original **factory stock firmware**.
 
 This allows you to test the entire zero-touch wireless onboarding flow from a completely clean slate, or return the feeder to the official Pawsync/VeSync smartphone app at any time with zero hardware disassembly.
 
 ---
 
-## Architecture: Why Rollback is 100% Non-Destructive
+## 📑 Table of Contents
+
+- [Architecture: Dual-Layer Safety & Zero-Teardown Engine](#architecture-dual-layer-safety--zero-teardown-engine)
+- [Method 1: 1-Click Wireless Restore via Home Assistant (Recommended)](#method-1-1-click-wireless-restore-via-home-assistant-recommended)
+- [Method 2: Immediate Post-Conversion Slot Toggle (Bootloader Ping-Pong)](#method-2-immediate-post-conversion-slot-toggle-bootloader-ping-pong)
+- [Method 3: Command-Line Serial Slot Reset (esptool otadata)](#method-3-command-line-serial-slot-reset-esptool-otadata)
+- [Method 4: Clean Slate Recovery from 4MB Flash Dump (Hardware Unbrick)](#method-4-clean-slate-recovery-from-4mb-flash-dump-hardware-unbrick)
+- [How to Test Clean Onboarding After Rollback](#how-to-test-clean-onboarding-after-rollback)
+
+---
+
+## Architecture: Dual-Layer Safety & Zero-Teardown Engine
 
 The Pawsync PPF-R361S feeder contains a **4MB SPI Flash** with an ESP-IDF dual OTA partition layout matching `partitions.csv`:
 
@@ -30,53 +41,65 @@ The Pawsync PPF-R361S feeder contains a **4MB SPI Flash** with an ESP-IDF dual O
 0x400000 └───────────────────────────────────────┘
 ```
 
-When you initially transitioned from stock factory firmware to ESPHome via wireless OTA, stock firmware was in one slot and ESPHome was flashed into the alternate slot (e.g., `ota_0`). The factory stock firmware in the alternate partition (`ota_1`) was initially left intact.
+PawSync provides two levels of rollback safety:
 
-> [!WARNING]
-> ### ⚠️ A/B Ping-Pong Lifecycle vs Full Factory Restore
-> The software rollback switch (`switch.pawsync_feeder_unlock_factory_firmware_rollback` + `button.pawsync_feeder_rollback_to_factory_firmware_slot_ota_1`) instructs the ESP-IDF bootloader to toggle between `ota_0` and `ota_1`.
-> - **Initial State**: Immediately after the first wireless conversion, toggling slots reboots back into original stock factory firmware.
-> - **Subsequent ESPHome OTAs**: Once an ESPHome-to-ESPHome OTA is performed, ESPHome writes to the alternate slot. At this point, **both slots contain ESPHome builds** (current and previous version). Toggling rollback will switch between ESPHome versions, not factory firmware.
-> - **Permanent Factory Recovery**: To permanently restore pristine stock factory firmware at any point, flash your full 4MB factory backup image (`pawsync_factory_4MB_backup.bin`) via esptool (Method 3).
+1. **Persistent Automated Factory Backup (Host-Level Archive)**:
+   During initial onboarding, the feeder's embedded HTTP backup server (`port 32769`) automatically transfers the pristine factory firmware partition and NVS calibration directly to Home Assistant storage:
+   ```text
+   /config/pawsync_backups/<mac>/stock_firmware.bin
+   /config/pawsync_backups/<mac>/cal_<mac>.bin
+   ```
+   Because this binary is preserved on Home Assistant disk, **you can roll back wirelessly at any time**, even after upgrading through multiple ESPHome versions (`v1.4.x` → `v1.5.0`, etc.)!
+
+2. **On-Device Alternate Slot (Initial Conversion State)**:
+   Immediately after the first transition from stock firmware to ESPHome, the stock firmware still resides physically in the alternate slot (`ota_1`). A software button can toggle back to it. However, once a subsequent ESPHome-to-ESPHome OTA is performed, both flash slots will contain ESPHome builds. At that stage, **Method 1 (Wireless Restore via Service)** is used to flash the archived factory firmware back.
 
 ---
 
-## Method 1: Instant In-Home-Assistant Rollback (2 Clicks)
+## Method 1: 1-Click Wireless Restore via Home Assistant (Recommended)
 
-If your feeder is currently running ESPHome and connected to Home Assistant, you can roll back instantly from the Home Assistant UI without opening a terminal or unplugging the feeder.
+This is the standard, zero-teardown method. It works at any time—regardless of whether you just converted your feeder or have installed multiple ESPHome updates.
+
+### Prerequisites
+- Feeder is online and connected to Home Assistant.
+- Automated factory backup is completed (`sensor.<feeder_name>_factory_firmware_backup` shows `Backed Up`).
 
 ### Step-by-Step UI Procedure
-
-1. In Home Assistant, open **Developer Tools** -> **States** (or navigate to your Pawsync Feeder device page under **Settings -> Devices & Services**).
-2. Locate the safety interlock switch:
-   - **Entity:** `switch.pawsync_feeder_unlock_factory_firmware_rollback` (or `switch.*_unlock_factory_firmware_rollback`)
-   - **Friendly Name:** `Unlock Factory Firmware Rollback`
-   - Toggle this switch to **ON**.
-   > **Note:** This switch is an intentional software safety interlock that prevents accidental rollback triggers.
-
-3. Locate the rollback button:
-   - **Entity:** `button.pawsync_feeder_rollback_to_factory_firmware_slot_ota_1` (or `button.*_rollback_to_factory_firmware*`)
-   - **Friendly Name:** `Rollback to Factory Firmware (Slot ota_1)`
-   - Click **Press** (or call the `button.press` service).
-
-4. **Observe Feeder Behavior**:
-   - The ESPHome log will confirm:
-     ```
-     [W][ppf_r361s:1404] Initiating software rollback to stock firmware partition 'ota_1'...
-     [W][ppf_r361s:1416] Boot partition set to 'ota_1' successfully! Rebooting into stock factory firmware in 2 seconds...
-     ```
-   - In 2 seconds, the ESP32-C3 will reboot.
-   - The Wi-Fi indicator on the feeder front panel will pulse or illuminate according to the stock firmware behavior.
-   - The feeder is now running the factory stock firmware!
-
-5. **Verify Stock Operation**:
-   - Open your official **Pawsync** (or **VeSync**) mobile app on your smartphone.
-   - The feeder will reconnect to your Wi-Fi network and show as **Online** in the mobile app.
-   - Test a manual dispense or inspect the bowl weight from the phone app to confirm stock functionality.
+1. In Home Assistant, navigate to **Developer Tools** -> **Actions** (or **Services**).
+2. Select action: **`pawsync.restore_stock_firmware`**.
+3. Toggle **Confirm Factory Restore** to `true` (checked).
+   *(Optional: If you have multiple feeders, specify the target feeder's `host` IP or `mac`).*
+4. Click **Perform Action**.
+5. **Observe Feeder Behavior**:
+   - Home Assistant validates the archived `stock_firmware.bin` (ESP-IDF header `0xE9` and partition segment integrity).
+   - It connects to the feeder running ESPHome on port `3232` (ESPHome OTA).
+   - It streams the stock firmware image wirelessly into flash.
+   - The feeder validates the image and reboots into genuine factory VeSync firmware within 15–30 seconds.
+6. **Verify Stock Operation**:
+   - TCP developer port `55555` will reopen (`vesync_bypass_json_msg_handle`).
+   - Open your official **Pawsync** (or **VeSync**) mobile app; the feeder will appear **Online** with factory weight calibration intact.
 
 ---
 
-## Method 2: Command-Line Serial Rollback (esptool)
+## Method 2: Immediate Post-Conversion Slot Toggle (Bootloader Ping-Pong)
+
+If you have just converted your feeder to ESPHome for the first time and have **not** installed any subsequent ESPHome updates, the stock firmware is still physically resting in flash partition `ota_1`. You can toggle back using the onboard software switches.
+
+### Step-by-Step UI Procedure
+1. In Home Assistant, navigate to your Pawsync Feeder device page under **Settings -> Devices & Services**.
+2. Locate the safety interlock switch:
+   - **Entity:** `switch.pawsync_feeder_unlock_factory_firmware_rollback`
+   - **Friendly Name:** `Unlock Factory Firmware Rollback`
+   - Toggle this switch to **ON**.
+3. Locate the rollback button:
+   - **Entity:** `button.pawsync_feeder_rollback_to_factory_firmware_slot_ota_1`
+   - **Friendly Name:** `Rollback to Factory Firmware (Slot ota_1)`
+   - Click **Press**.
+4. The ESP32 bootloader updates `otadata` and reboots into `ota_1` in 2 seconds.
+
+---
+
+## Method 3: Command-Line Serial Slot Reset (esptool otadata)
 
 If your feeder is not connected to Home Assistant or you prefer resetting the boot slot via serial connection:
 
@@ -104,7 +127,7 @@ Upon reboot, the ESP-IDF second-stage bootloader searches for the first valid pa
 
 ---
 
-## Method 3: Clean Slate Recovery from 4MB Flash Dump (Hardware Unbrick)
+## Method 4: Clean Slate Recovery from 4MB Flash Dump (Hardware Unbrick)
 
 If your device becomes completely unresponsive or bricked, you can restore your original factory flash image using a 3.3V USB-to-UART serial adapter:
 

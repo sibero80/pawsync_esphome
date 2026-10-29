@@ -49,6 +49,34 @@ Instead of buying the developer a coffee, please consider helping rescued cats i
 
 ---
 
+## 📑 Table of Contents
+
+- [⚠️ Disclaimer & Liability](#️-experimental-software--liability-disclaimer)
+- [🐾 Support Matruska Cat Shelter](#-support-matruska-cat-shelter-medellín)
+- [✨ Key Features](#key-features)
+- [🚀 Quick Start Installation](#quick-start-installation)
+  - [Method 1: HACS (Recommended)](#method-1-hacs-recommended)
+  - [Method 2: Manual Installation](#method-2-manual-installation)
+- [📱 Feeder Dashboard Card](#feeder-dashboard-card)
+- [🔄 Routine Firmware Updates (In-Home Assistant)](#-routine-firmware-updates-in-home-assistant)
+  - [How Routine Updates Work](#how-routine-updates-work)
+  - [Safety & Overwrite Protection Interlock](#safety--overwrite-protection-interlock)
+- [⏪ 1-Click Factory Stock Rollback (Zero Teardown)](#-1-click-factory-stock-rollback-zero-teardown)
+  - [Zero-Teardown Wireless Restore](#zero-teardown-wireless-restore)
+  - [Where Backups Are Stored](#where-backups-are-stored)
+  - [Step-by-Step UI Procedure](#step-by-step-ui-procedure)
+- [🛠️ Hardware Teardown, UART Pinout & Flash Backup/Restore](#️-hardware-teardown-uart-pinout--flash-backuprestore-guide)
+  - [Step 1: Safe Disassembly](#step-1-safe-disassembly)
+  - [Step 2: UART Pinout & Wiring](#step-2-uart-pinout--wiring)
+  - [Step 3: Enter Bootloader Mode](#step-3-enter-bootloader-download-mode)
+  - [Step 4: Full 4MB Byte-for-Byte Factory Backup](#step-4-perform-full-4mb-byte-for-byte-factory-backup)
+  - [Step 5: Disaster Recovery via Serial](#step-5-disaster-recovery-restoring-full-factory-backup)
+- [📚 Detailed Documentation](#detailed-documentation)
+- [⚙️ Technical Specifications](#technical-specifications)
+- [📄 License](#license)
+
+---
+
 ## Key Features
 
 - **Guided In-HA Adoption Wizard**:
@@ -125,6 +153,54 @@ type: custom:pawsync-feeder-card
 > 2. Alternatively, in Home Assistant go to **Settings** -> **Dashboards** -> **Three dots (top right)** -> **Resources** -> **Add Resource**:
 >    - **URL**: `/local/pawsync-feeder-card.js`
 >    - **Resource type**: JavaScript Module (`module`)
+
+---
+
+## 🔄 Routine Firmware Updates (In-Home Assistant)
+
+Once your feeder is running PawSync ESPHome firmware, subsequent updates (such as upgrading from `v1.4.x` to `v1.5.0`) are executed seamlessly from your Home Assistant dashboard via the native `update` entity (`update.<feeder_name>_firmware`).
+
+### How Routine Updates Work
+1. **GitHub Release Discovery**: Home Assistant periodically polls for new official releases and displays a notification banner when a newer version is published.
+2. **Encrypted Native OTA Transfer (Port 3232)**: When you click **Install / Update**:
+   - Home Assistant retrieves and validates the release binary (`pawsync_ota_update.bin`), stripping container wrappers for native ESPHome flashing.
+   - It establishes a direct TCP connection to the feeder's OTA listener on port `3232`.
+   - It executes a cryptographic SHA-256 challenge-response handshake using the unique per-device OTA password assigned during initial provisioning.
+   - It streams the firmware blocks with a live progress bar (0% → 100%) directly in your dashboard.
+3. **Dual-Partition Ping-Pong Switching**: The ESP32 writes the firmware to its secondary partition, validates partition CRC integrity, and updates the bootloader otadata record.
+4. **Autonomous Adoption**: The feeder reboots in ~30–45 seconds and reconnects to your local Wi-Fi network and ESPHome Native API (`port 6053`). **All feeding schedules, portion gram calibrations, eating speed sensors, and Lovelace cards remain 100% preserved.**
+
+### Safety & Overwrite Protection Interlock
+To ensure you never accidentally overwrite your factory stock firmware:
+- When you first onboard a factory feeder, the alternate partition still contains pristine stock firmware.
+- The feeder's embedded zero-teardown backup server automatically transfers a complete copy of the stock firmware and NVS calibration directly to Home Assistant storage (`/config/pawsync_backups/<mac>/`).
+- **Safety Interlock**: If you trigger an update before this backup has completed, PawSync **blocks** the OTA process to protect you from losing your factory firmware. You can check `sensor.<feeder_name>_factory_firmware_backup` (which displays `Backed Up` when secured). Once safely archived, updates proceed smoothly.
+
+---
+
+## ⏪ 1-Click Factory Stock Rollback (Zero Teardown)
+
+Unlike conventional ESPHome conversions where flashing custom firmware permanently replaces your stock software, PawSync includes a built-in **Zero-Teardown Wireless Rollback Engine**. You can revert your feeder to 100% factory VeSync operation at any time without opening the unit or using a screwdriver.
+
+### Zero-Teardown Wireless Restore
+- **Preserved Across Updates**: Even after upgrading through multiple ESPHome versions (e.g. `v1.4.1` → `v1.5.0`), your original factory stock firmware and factory load-cell calibration remain safely archived on your Home Assistant host:
+  ```text
+  /config/pawsync_backups/<mac>/stock_firmware.bin
+  /config/pawsync_backups/<mac>/cal_<mac>.bin
+  ```
+- **Over-the-Air Re-flash**: Home Assistant connects to the feeder running ESPHome on port `3232` and flashes the archived genuine stock firmware binary directly over Wi-Fi.
+- **Factory Operation**: The feeder reboots into genuine stock VeSync firmware, developer TCP port `55555` reopens, and the feeder can be immediately adopted back into the official VeSync smartphone app with calibrated weight measurements intact.
+
+### Step-by-Step UI Procedure
+1. In Home Assistant, navigate to **Developer Tools** -> **Actions** (or **Services** in older versions).
+2. Select action: **`pawsync.restore_stock_firmware`**.
+3. Toggle **Confirm Factory Restore** to `true` (checked).
+   *(If you have multiple feeders configured, specify the feeder's `host` IP or `mac`).*
+4. Click **Perform Action**.
+5. Home Assistant streams the stock binary over Port 3232. Within 15–30 seconds, the feeder reboots back into factory stock firmware and is ready for the official VeSync mobile app.
+
+> [!TIP]
+> For advanced recovery methods, partition layout diagrams, or hardware serial recovery, refer to the [Stock Firmware Rollback & Disaster Recovery Runbook](STOCK_ROLLBACK_AND_RECOVERY.md).
 
 ---
 
