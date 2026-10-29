@@ -40,6 +40,7 @@ from .const import (
     generate_noise_psk,
     UNIT_SYSTEM_IMPERIAL,
     UNIT_SYSTEM_METRIC,
+    TRANSITION_NOISE_PSK,
     VERSION,
 )
 from .esphome_provisioner import (
@@ -290,7 +291,10 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             feeder_name = self._selected_feeder_info.get("name", "Pawsync Feeder")
             mac_address = self._selected_feeder_info.get("mac", "")
             cid = self._selected_feeder_cid
-            device_noise_psk = self._selected_feeder_info.get("noise_psk") or generate_noise_psk()
+            if self._flash_method == FLASH_METHOD_OTA:
+                device_noise_psk = TRANSITION_NOISE_PSK
+            else:
+                device_noise_psk = self._selected_feeder_info.get("noise_psk") or generate_noise_psk()
             self._selected_feeder_info["noise_psk"] = device_noise_psk
 
             # Automatically provision /config/esphome/ YAML
@@ -339,7 +343,7 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         feeder_name = self._selected_feeder_info.get("name", "Pawsync Feeder")
         mac_address = self._selected_feeder_info.get("mac", "")
         cid = self._selected_feeder_cid
-        device_noise_psk = self._selected_feeder_info.get("noise_psk") or generate_noise_psk()
+        device_noise_psk = self._selected_feeder_info.get("noise_psk") or TRANSITION_NOISE_PSK
 
         # 1. Prepare & patch firmware
         fw_path = await async_ensure_firmware_binary(
@@ -439,7 +443,7 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         mac_address = self._selected_feeder_info.get("mac", "")
         cid = self._selected_feeder_cid
         local_ip = self._selected_feeder_info.get("ip") or ""
-        device_noise_psk = self._selected_feeder_info.get("noise_psk") or generate_noise_psk()
+        device_noise_psk = self._selected_feeder_info.get("noise_psk") or TRANSITION_NOISE_PSK
 
         title = f"{feeder_name} ({mac_address or cid[:8]})"
         entry_data = {

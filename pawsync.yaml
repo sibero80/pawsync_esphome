@@ -6,10 +6,11 @@ substitutions:
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
+  name_add_mac_suffix: true
   comment: "Local ESPHome firmware for Pawsync PPF-R361S Pet Feeder with Zero-Touch Dynamic Wi-Fi & Backup (v1.4.3)"
   project:
     name: "sibero80.pawsync_esphome"
-    version: "1.4.3"
+    version: "1.4.4"
   min_version: 2024.6.0
   on_boot:
     - priority: -100.0
