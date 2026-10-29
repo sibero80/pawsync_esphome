@@ -76,3 +76,20 @@ restore_stock_firmware:
       required: false
       selector:
         text:
+
+restore_cloud_backup:
+  name: Restore Cloud Settings Backup
+  description: Restore harvested VeSync cloud settings (meal schedules, portion sizes, dispensing sound, and calibrations) to the adopted PawSync feeder.
+  fields:
+    mac:
+      name: Feeder MAC Address
+      description: Feeder MAC address (optional if only one feeder is configured).
+      required: false
+      selector:
+        text:
+    entry_id:
+      name: Config Entry ID
+      description: Home Assistant config entry ID (optional if only one feeder is configured).
+      required: false
+      selector:
+        text:

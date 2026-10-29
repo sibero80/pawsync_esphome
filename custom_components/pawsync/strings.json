@@ -52,7 +52,7 @@
       },
       "recovery": {
         "title": "Feeder Adoption Recovery",
-        "description": "The feeder was flashed with ESPHome firmware, but Home Assistant has not yet established an encrypted connection with {feeder_name} (MAC: {mac}).\n\nRecovery options:\n1. Retry: Search again if the feeder is still rebooting.\n2. Manual IP: Enter the feeder's local IP address if your network uses separate VLANs or blocks mDNS.\n3. Fallback AP: If the feeder failed to connect to Wi-Fi, look for Wi-Fi network '{fallback_ssid}' (Password: '{fallback_password}') to reconfigure network credentials.\n4. Proceed: Finish setup now and let Home Assistant adopt the feeder later in the background.",
+        "description": "The feeder was flashed with ESPHome firmware, but Home Assistant has not yet established an encrypted connection with {feeder_name} (MAC: {mac}).\n\nRecovery options:\n1. Retry: Search again if the feeder is still rebooting.\n2. Manual IP: Enter the feeder's local IP address if your network uses separate VLANs or blocks mDNS.\n3. Fallback AP: If the feeder failed to connect to Wi-Fi, look for Wi-Fi network \"{fallback_ssid}\" (Password: \"{fallback_password}\") to reconfigure network credentials.\n4. Proceed: Finish setup now and let Home Assistant adopt the feeder later in the background.",
         "data": {
           "recovery_action": "Action",
           "host": "Device IP Address (for Manual IP)"
