@@ -196,7 +196,8 @@ async def async_harvest_factory_backup(
     """Extract, sanitize, validate, and store factory firmware and calibration from feeder."""
     stock_path, cal_path = get_backup_paths(hass, mac)
 
-    if not force and has_valid_local_backup(hass, mac):
+    has_backup = await hass.async_add_executor_job(has_valid_local_backup, hass, mac)
+    if not force and has_backup:
         _LOGGER.info("Valid factory backup already exists locally for MAC %s", mac)
         return {"status": BACKUP_STATUS_BACKED_UP, "source": "local_cache"}
 

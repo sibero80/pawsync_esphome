@@ -40,6 +40,7 @@ from .const import (
     generate_noise_psk,
     UNIT_SYSTEM_IMPERIAL,
     UNIT_SYSTEM_METRIC,
+    VERSION,
 )
 from .esphome_provisioner import (
     async_auto_adopt_esphome,
