@@ -38,8 +38,9 @@ def get_local_firmware_candidates(hass: HomeAssistant) -> list[str]:
     ]
 
 
-def validate_firmware_container(path: str) -> bool:
-    """Validate that a firmware file exists and matches the VeSync container structure."""
+def validate_firmware_container(path: str, require_patchable: bool = False) -> bool:
+    """Validate that a firmware file exists, matches the VeSync container structure,
+    and optionally contains dynamic Wi-Fi placeholders."""
     if not os.path.exists(path):
         return False
     try:
@@ -49,9 +50,19 @@ def validate_firmware_container(path: str) -> bool:
             return False
 
         with open(path, "rb") as f:
-            header = f.read(1)
-            if not header or header[0] != CONTAINER_MAGIC_BYTE:
-                _LOGGER.debug("Candidate %s has invalid header byte (expected 0x01, got %s)", path, header)
+            content = f.read()
+
+        if not content or content[0] != CONTAINER_MAGIC_BYTE:
+            _LOGGER.debug("Candidate %s has invalid header byte (expected 0x01)", path)
+            return False
+
+        if require_patchable:
+            from .firmware_patcher import can_patch_firmware
+            if not can_patch_firmware(content):
+                _LOGGER.info(
+                    "Candidate %s lacks dynamic Wi-Fi placeholders; discarding stale cache",
+                    path,
+                )
                 return False
 
         return True
@@ -64,17 +75,25 @@ async def async_ensure_firmware_binary(
     hass: HomeAssistant,
     version: str | None = None,
     session: aiohttp.ClientSession | None = None,
+    require_patchable: bool = False,
 ) -> str:
     """Ensure a verified firmware container is available locally.
 
-    Searches local storage paths first. If not present or invalid, downloads
+    Searches local storage paths first. If not present, stale, or invalid, downloads
     the verified binary from the official upstream repository (sibero80/pawsync_ota).
     """
     # 1. Check local candidates
     for candidate in get_local_firmware_candidates(hass):
-        if validate_firmware_container(candidate):
+        if validate_firmware_container(candidate, require_patchable=require_patchable):
             _LOGGER.info("Using local firmware container: %s (%d bytes)", candidate, os.path.getsize(candidate))
             return candidate
+        elif os.path.exists(candidate) and require_patchable:
+            # Stale candidate without patch placeholders; clean up to avoid reuse
+            try:
+                os.remove(candidate)
+                _LOGGER.info("Removed stale cached firmware: %s", candidate)
+            except Exception as err:
+                _LOGGER.debug("Could not remove stale candidate %s: %s", candidate, err)
 
     _LOGGER.info(
         "No valid local %s found. Downloading from upstream repository (%s)...",

@@ -309,7 +309,9 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if self._flash_method == FLASH_METHOD_OTA:
                 fw_path = None
                 try:
-                    fw_path = await async_ensure_firmware_binary(self.hass)
+                    fw_path = await async_ensure_firmware_binary(
+                        self.hass, version=VERSION, require_patchable=True
+                    )
                 except Exception as dl_err:
                     _LOGGER.warning("Could not obtain firmware binary for OTA: %s", dl_err)
 
