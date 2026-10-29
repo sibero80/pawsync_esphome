@@ -259,3 +259,33 @@ def test_validate_esp32_image_structure_rejects_leftover_placeholders():
     with pytest.raises(FirmwarePatchError, match="unpatched placeholder.*found in binary"):
         validate_esp32_image_structure(bin_with_placeholders, require_no_placeholders=True)
 
+
+def test_patch_compiled_noise_psk_binary():
+    """Verify dynamic byte patching works when firmware has compiled 32-byte Noise PSK instead of ASCII placeholder."""
+    from custom_components.pawsync.firmware_patcher import (
+        DEFAULT_COMPILED_NOISE_PSK_BYTES,
+        NOISE_PSK_PLACEHOLDER,
+    )
+    import base64
+
+    # Create synthetic binary and replace ASCII placeholder with 32-byte compiled key
+    raw_bin = create_synthetic_esp32_binary(include_placeholders=True, include_psk=True, include_ota=True)
+    raw_bin = raw_bin.replace(NOISE_PSK_PLACEHOLDER, DEFAULT_COMPILED_NOISE_PSK_BYTES.ljust(44, b"\x00"))
+
+    assert can_patch_firmware(raw_bin, require_psk=True, require_ota=True) is True
+
+    new_psk = generate_noise_psk()
+    new_psk_raw = base64.b64decode(new_psk)
+
+    patched = patch_raw_esp32_credentials(
+        raw_bin,
+        ssid="MyWifiNet",
+        password="MySecretPassword123",
+        noise_psk=new_psk,
+        ota_password="SecureOtaPassword123",
+    )
+
+    assert new_psk_raw in patched
+    assert DEFAULT_COMPILED_NOISE_PSK_BYTES not in patched
+    assert b"MyWifiNet" in patched
+

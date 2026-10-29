@@ -120,10 +120,7 @@ class PawSyncFirmwareUpdateEntity(UpdateEntity):
 
         # 3. Check Device Registry
         dev_reg = dr.async_get(self.hass)
-        if hasattr(dev_reg, "async_get_device_by_identifier"):
-            device = dev_reg.async_get_device_by_identifier((DOMAIN, str(self._cid)))
-        else:
-            device = dev_reg.async_get_device(identifiers={(DOMAIN, str(self._cid))})
+        device = dev_reg.async_get_device(identifiers={(DOMAIN, str(self._cid))})
         if device and isinstance(device.sw_version, str) and device.sw_version.startswith("v"):
             self._installed_version = device.sw_version.lstrip("v")
             return self._installed_version

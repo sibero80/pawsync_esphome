@@ -34,6 +34,8 @@ class FirmwarePatchError(Exception):
 SSID_PLACEHOLDER = b"PAWSYNC_WIFI_SSID_PLACEHOLDER31\x00"
 PASS_PLACEHOLDER = b"PAWSYNC_WIFI_PASSWORD_PLACEHOLDER_63_BYTES_LONG_BUFFER_BUFFER_X\x00"
 NOISE_PSK_PLACEHOLDER = b"PLACEHOLDER_NOISE_PSK_KEY_44B_______________"
+DEFAULT_COMPILED_NOISE_PSK_B64 = "OjRSzAh3ADVkNjmBs5+K6GnOY0tGoSqlniJvsmolVeE="
+DEFAULT_COMPILED_NOISE_PSK_BYTES = base64.b64decode(DEFAULT_COMPILED_NOISE_PSK_B64)
 OTA_PASSWORD_PLACEHOLDER = b"PLACEHOLDER_OTA_PASSWORD_32B____"
 
 MAX_SSID_LEN = 32
@@ -79,7 +81,10 @@ def can_patch_firmware(
     )
     if SSID_PLACEHOLDER not in raw or PASS_PLACEHOLDER not in raw:
         return False
-    if require_psk and NOISE_PSK_PLACEHOLDER not in raw:
+    if require_psk and (
+        NOISE_PSK_PLACEHOLDER not in raw
+        and DEFAULT_COMPILED_NOISE_PSK_BYTES not in raw
+    ):
         return False
     if require_ota and OTA_PASSWORD_PLACEHOLDER not in raw:
         return False
@@ -177,18 +182,31 @@ def patch_raw_esp32_credentials(
         buf[idx_p : idx_p + MAX_PASS_LEN] = pass_bytes
         patched_placeholders.extend([SSID_PLACEHOLDER, PASS_PLACEHOLDER])
 
-    # 2. Noise PSK (44 bytes base64)
+    # 2. Noise PSK (either 32-byte raw binary compiled key or 44-byte ASCII placeholder)
     if noise_psk:
-        idx_k = buf.find(NOISE_PSK_PLACEHOLDER)
-        if idx_k == -1:
-            raise FirmwarePatchError("Required Noise PSK placeholder not found in firmware binary")
-        psk_bytes = noise_psk.encode("ascii")
-        if len(psk_bytes) != MAX_NOISE_PSK_LEN:
-            raise FirmwarePatchError(
-                f"Noise PSK length invalid: {len(psk_bytes)} bytes (expected {MAX_NOISE_PSK_LEN})"
-            )
-        buf[idx_k : idx_k + MAX_NOISE_PSK_LEN] = psk_bytes
-        patched_placeholders.append(NOISE_PSK_PLACEHOLDER)
+        idx_bin = buf.find(DEFAULT_COMPILED_NOISE_PSK_BYTES)
+        if idx_bin != -1:
+            try:
+                raw_psk = base64.b64decode(noise_psk)
+            except Exception as err:
+                raise FirmwarePatchError(f"Noise PSK base64 decode failed: {err}") from err
+            if len(raw_psk) != 32:
+                raise FirmwarePatchError(
+                    f"Noise PSK decoded length invalid: {len(raw_psk)} bytes (expected 32)"
+                )
+            buf[idx_bin : idx_bin + 32] = raw_psk
+            patched_placeholders.append(DEFAULT_COMPILED_NOISE_PSK_BYTES)
+        else:
+            idx_k = buf.find(NOISE_PSK_PLACEHOLDER)
+            if idx_k == -1:
+                raise FirmwarePatchError("Required Noise PSK placeholder not found in firmware binary")
+            psk_bytes = noise_psk.encode("ascii")
+            if len(psk_bytes) != MAX_NOISE_PSK_LEN:
+                raise FirmwarePatchError(
+                    f"Noise PSK length invalid: {len(psk_bytes)} bytes (expected {MAX_NOISE_PSK_LEN})"
+                )
+            buf[idx_k : idx_k + MAX_NOISE_PSK_LEN] = psk_bytes
+            patched_placeholders.append(NOISE_PSK_PLACEHOLDER)
 
     # 3. OTA password (up to 31 bytes + \0 = 32 bytes)
     if ota_password:
