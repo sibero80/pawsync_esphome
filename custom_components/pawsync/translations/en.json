@@ -51,6 +51,9 @@
         }
       }
     },
+    "progress": {
+      "converting": "Converting Pawsync Feeder to Local ESPHome...\n\n1. Dynamic Wi-Fi credential injection into binary\n2. Transferring firmware to feeder over local network\n3. Writing firmware to flash & rebooting\n4. Reconnecting directly to home Wi-Fi\n\nPlease wait while your feeder comes online (typically 45–75 seconds)..."
+    },
     "error": {
       "cannot_connect": "Failed to connect to cloud service or feeder host.",
       "invalid_auth": "Invalid username, password, or account region. Check your credentials.",

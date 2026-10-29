@@ -115,6 +115,48 @@ async def test_cloud_onboarding_full_flow():
 
 
 @pytest.mark.asyncio
+async def test_cloud_onboarding_ota_progress_flow():
+    """Test OTA progress step with wait and auto-completion."""
+    from custom_components.pawsync.const import FLASH_METHOD_OTA
+
+    flow = PawsyncConfigFlow()
+    flow.hass = MagicMock()
+    flow.hass.config.config_dir = "/tmp"
+    flow.hass.async_create_task = MagicMock(side_effect=lambda coro: asyncio.create_task(coro))
+
+    flow._selected_feeder_cid = "cid_cat_001"
+    flow._selected_feeder_info = {
+        "cid": "cid_cat_001",
+        "mac": "11:22:33:44:55:66",
+        "name": "Fluffy's Feeder",
+        "model": "PPF-R361S",
+        "ip": "192.168.1.99",
+    }
+    flow._wifi_ssid = "HomeNetwork"
+    flow._wifi_password = "Password123"
+
+    with patch.object(flow, "_async_convert_feeder_task", new=AsyncMock(return_value=None)):
+        # Step: Flash wizard with OTA
+        res = await flow.async_step_flash_wizard({
+            "flash_method": FLASH_METHOD_OTA,
+        })
+        assert res["type"] == "progress"
+        assert res["step_id"] == "ota_progress"
+        assert res["progress_action"] == "converting"
+
+        # Advance progress step once task is done
+        await flow._ota_task
+        res_done = await flow.async_step_ota_progress()
+        assert res_done["type"] == "progress_done"
+        assert res_done["next_step_id"] == "ota_finish"
+
+        # Finish step creates entry
+        res_entry = await flow.async_step_ota_finish()
+        assert res_entry["type"] == "create_entry"
+        assert "Fluffy's Feeder" in res_entry["title"]
+
+
+@pytest.mark.asyncio
 async def test_options_flow():
     """Test options flow initialization and update."""
     from custom_components.pawsync.config_flow import PawsyncOptionsFlowHandler

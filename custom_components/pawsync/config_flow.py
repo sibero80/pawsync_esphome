@@ -78,6 +78,7 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._flash_method: str = FLASH_METHOD_OTA
         self._unit_system: str = UNIT_SYSTEM_METRIC
         self._ota_stager: PawsyncOtaStager | None = None
+        self._ota_task: asyncio.Task | None = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -306,82 +307,12 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except Exception as err:
                 _LOGGER.warning("Could not auto-provision ESPHome YAML: %s", err)
 
-            # If wireless OTA was chosen, trigger stager and cloud relay
+            # If wireless OTA was chosen, show progress and wait for device to reconnect
             if self._flash_method == FLASH_METHOD_OTA:
-                fw_path = None
-                try:
-                    fw_path = await async_ensure_firmware_binary(
-                        self.hass, version=VERSION, require_patchable=True
-                    )
-                except Exception as dl_err:
-                    _LOGGER.warning("Could not obtain firmware binary for OTA: %s", dl_err)
+                return await self.async_step_ota_progress()
 
-                if fw_path and self._cloud_auth.get(CONF_ACCOUNT_ID) and self._cloud_auth.get(CONF_TOKEN):
-                    try:
-                        session = async_get_clientsession(self.hass)
-                        stager = PawsyncOtaStager(
-                            firmware_path=fw_path,
-                            wifi_ssid=self._wifi_ssid,
-                            wifi_password=self._wifi_password,
-                        )
-                        download_url = await stager.async_start()
-
-                        relay = VeSyncRelay(
-                            account_id=self._cloud_auth[CONF_ACCOUNT_ID],
-                            token=self._cloud_auth[CONF_TOKEN],
-                            session=session,
-                        )
-                        model = self._selected_feeder_info.get("model", "VS_WB_PFM_PPF-R361S-WUS_US")
-                        res = await relay.async_trigger_ota(
-                            cid=cid,
-                            download_url=download_url,
-                            model=model,
-                        )
-                        _LOGGER.info("Cloud OTA trigger response: %s", res)
-                    except Exception as err:
-                        _LOGGER.warning("OTA wireless trigger failed: %s", err)
-
-            # Trigger background ESPHome auto-adoption
-            local_ip = self._selected_feeder_info.get("ip") or ""
-            if not local_ip and mac_address:
-                local_ip = resolve_ip_from_mac(mac_address, hass=self.hass)
-
-            device_noise_psk = self._selected_feeder_info.get("noise_psk") or generate_noise_psk()
-
-            self.hass.async_create_task(
-                async_auto_adopt_esphome(
-                    self.hass,
-                    host=local_ip or "",
-                    noise_psk=device_noise_psk,
-                    mac=mac_address,
-                    feeder_name=feeder_name,
-                )
-            )
-
-            # Successfully complete flow
-            title = f"{feeder_name} ({mac_address or cid[:8]})"
-            entry_data = {
-                CONF_ONBOARDING_MODE: self._onboarding_mode,
-                CONF_ACCOUNT_ID: self._cloud_auth.get(CONF_ACCOUNT_ID),
-                CONF_TOKEN: None,  # Redacted: cloud token is bootstrap-only and not persisted
-                CONF_SELECTED_FEEDER: cid,
-                "feeder_info": self._selected_feeder_info,
-                "noise_psk": device_noise_psk,
-                CONF_FLASH_METHOD: self._flash_method,
-                CONF_SSID: self._wifi_ssid,
-                CONF_HOST: local_ip,
-                CONF_UNIT_SYSTEM: self._unit_system,
-            }
-
-            return self.async_create_entry(
-                title=title,
-                data=entry_data,
-                description_placeholders={
-                    "feeder_name": feeder_name,
-                    "ip": local_ip or "Discovered IP",
-                    "noise_psk": device_noise_psk,
-                },
-            )
+            # Otherwise complete flow immediately
+            return self._create_feeder_entry()
 
         data_schema = vol.Schema(
             {
@@ -389,9 +320,9 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_FLASH_METHOD, default=FLASH_METHOD_OTA
                 ): vol.In(
                     {
-                        FLASH_METHOD_OTA: "Automated Wireless OTA Flashing (Zero-Touch)",
-                        FLASH_METHOD_WEBSERIAL: "Browser WebSerial / USB-C Cable",
-                        FLASH_METHOD_SKIP: "Skip Flashing (Feeder Already on ESPHome)",
+                        FLASH_METHOD_OTA: "Wireless OTA: Zero-Touch Repackaging & Flash (Recommended)",
+                        FLASH_METHOD_WEBSERIAL: "WebSerial: Flash via USB-C cable in browser",
+                        FLASH_METHOD_SKIP: "Skip: Feeder is already running ESPHome",
                     }
                 )
             }
@@ -401,6 +332,137 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="flash_wizard",
             data_schema=data_schema,
             errors=errors,
+        )
+
+    async def _async_convert_feeder_task(self) -> None:
+        """Execute dynamic patching, staging, cloud OTA, and wait for feeder to reappear."""
+        feeder_name = self._selected_feeder_info.get("name", "Pawsync Feeder")
+        mac_address = self._selected_feeder_info.get("mac", "")
+        cid = self._selected_feeder_cid
+        device_noise_psk = self._selected_feeder_info.get("noise_psk") or generate_noise_psk()
+
+        # 1. Prepare & patch firmware
+        fw_path = await async_ensure_firmware_binary(
+            self.hass, version=VERSION, require_patchable=True
+        )
+
+        stager = PawsyncOtaStager(
+            firmware_path=fw_path,
+            wifi_ssid=self._wifi_ssid,
+            wifi_password=self._wifi_password,
+        )
+        download_url = await stager.async_start()
+
+        # 2. Trigger cloud relay command
+        session = async_get_clientsession(self.hass)
+        relay = VeSyncRelay(
+            account_id=self._cloud_auth[CONF_ACCOUNT_ID],
+            token=self._cloud_auth[CONF_TOKEN],
+            session=session,
+        )
+        model = self._selected_feeder_info.get("model", "VS_WB_PFM_PPF-R361S-WUS_US")
+        res = await relay.async_trigger_ota(
+            cid=cid,
+            download_url=download_url,
+            model=model,
+        )
+        _LOGGER.info("Cloud OTA trigger sent: %s. Waiting for feeder to flash and reconnect...", res)
+
+        # 3. Wait for feeder to reboot and come online on home network (up to 120s)
+        local_ip = self._selected_feeder_info.get("ip") or ""
+        await async_auto_adopt_esphome(
+            self.hass,
+            host=local_ip,
+            noise_psk=device_noise_psk,
+            mac=mac_address,
+            feeder_name=feeder_name,
+            max_attempts=40,
+            delay=3.0,
+        )
+
+        # Update discovered IP if resolved
+        if mac_address:
+            resolved = resolve_ip_from_mac(mac_address, hass=self.hass)
+            if resolved:
+                self._selected_feeder_info["ip"] = resolved
+
+    async def async_step_ota_progress(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Show progress bar and wait for feeder to flash and reconnect."""
+        if not hasattr(self, "_ota_task") or self._ota_task is None:
+            self._ota_task = self.hass.async_create_task(self._async_convert_feeder_task())
+            return self.async_show_progress(
+                step_id="ota_progress",
+                progress_action="converting",
+                progress_task=self._ota_task,
+            )
+
+        if not self._ota_task.done():
+            return self.async_show_progress(
+                step_id="ota_progress",
+                progress_action="converting",
+                progress_task=self._ota_task,
+            )
+
+        # Task is complete!
+        err = self._ota_task.exception()
+        if err:
+            _LOGGER.error("OTA conversion error: %s", err)
+            return self.async_show_progress_done(next_step_id="ota_error")
+
+        return self.async_show_progress_done(next_step_id="ota_finish")
+
+    async def async_step_ota_finish(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Create config entry after successful conversion and network reappearance."""
+        return self._create_feeder_entry()
+
+    async def async_step_ota_error(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Handle conversion error or timeout with recovery options."""
+        errors: dict[str, str] = {"base": "ota_trigger_failed"}
+        if user_input is not None:
+            return self._create_feeder_entry()
+
+        return self.async_show_form(
+            step_id="ota_error",
+            data_schema=vol.Schema({}),
+            errors=errors,
+        )
+
+    def _create_feeder_entry(self) -> config_entries.ConfigFlowResult:
+        """Helper to create the config entry."""
+        feeder_name = self._selected_feeder_info.get("name", "Pawsync Feeder")
+        mac_address = self._selected_feeder_info.get("mac", "")
+        cid = self._selected_feeder_cid
+        local_ip = self._selected_feeder_info.get("ip") or ""
+        device_noise_psk = self._selected_feeder_info.get("noise_psk") or generate_noise_psk()
+
+        title = f"{feeder_name} ({mac_address or cid[:8]})"
+        entry_data = {
+            CONF_ONBOARDING_MODE: self._onboarding_mode,
+            CONF_ACCOUNT_ID: self._cloud_auth.get(CONF_ACCOUNT_ID),
+            CONF_TOKEN: None,  # Redacted: cloud token is bootstrap-only and not persisted
+            CONF_SELECTED_FEEDER: cid,
+            "feeder_info": self._selected_feeder_info,
+            "noise_psk": device_noise_psk,
+            CONF_FLASH_METHOD: self._flash_method,
+            CONF_SSID: self._wifi_ssid,
+            CONF_HOST: local_ip,
+            CONF_UNIT_SYSTEM: self._unit_system,
+        }
+
+        return self.async_create_entry(
+            title=title,
+            data=entry_data,
+            description_placeholders={
+                "feeder_name": feeder_name,
+                "ip": local_ip or "Auto-discovering via mDNS...",
+                "noise_psk": device_noise_psk,
+            },
         )
 
     async def async_step_direct_esphome(

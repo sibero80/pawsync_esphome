@@ -29,6 +29,21 @@ if "homeassistant" not in sys.modules:
                 "description_placeholders": description_placeholders or {},
             }
 
+        def async_show_progress(self, step_id, progress_action, progress_task=None, description_placeholders=None):
+            return {
+                "type": "progress",
+                "step_id": step_id,
+                "progress_action": progress_action,
+                "progress_task": progress_task,
+                "description_placeholders": description_placeholders or {},
+            }
+
+        def async_show_progress_done(self, next_step_id):
+            return {
+                "type": "progress_done",
+                "next_step_id": next_step_id,
+            }
+
     config_entries.ConfigFlow = ConfigFlow
 
     class OptionsFlow:
