@@ -324,9 +324,35 @@ class PawsyncFeederCard extends HTMLElement {
     this._hass.callService(domain, service, data);
   }
 
-  _feed(portions) {
+  _resolveEsphomeService(action) {
     const feeder = this._getActiveFeeder();
-    const serviceName = `${feeder.prefix.replace(/_ppf_r361s_feeder$/, "_feeder")}_feed`;
+    if (this._hass && this._hass.services && this._hass.services.esphome) {
+      const services = Object.keys(this._hass.services.esphome);
+      const candidates = services.filter((s) => s.endsWith(`_${action}`));
+      if (candidates.length === 1) return candidates[0];
+
+      // Exact candidate match
+      const exactCandidate = `${feeder.prefix.replace(/_ppf_r361s_feeder$/, "_feeder")}_${action}`;
+      if (candidates.includes(exactCandidate)) return exactCandidate;
+
+      // Candidate substring match
+      const cleanPrefix = feeder.prefix.toLowerCase().replace(/[^a-z0-9]/g, "");
+      for (const cand of candidates) {
+        const cleanCand = cand.replace(`_${action}`, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (cleanPrefix.includes(cleanCand) || cleanCand.includes(cleanPrefix)) {
+          return cand;
+        }
+      }
+
+      // Match by position/index among discovered feeders
+      const idx = this._selectedFeederIdx || 0;
+      if (idx < candidates.length) return candidates[idx];
+    }
+    return `${feeder.prefix.replace(/_ppf_r361s_feeder$/, "_feeder")}_${action}`;
+  }
+
+  _feed(portions) {
+    const serviceName = this._resolveEsphomeService("feed");
     this._callService("esphome", serviceName, { portions: portions });
   }
 
@@ -343,7 +369,7 @@ class PawsyncFeederCard extends HTMLElement {
     const meal = this._localSchedules[feeder.prefix][mealIdx];
     meal.enabled = newEnabled;
 
-    const actionService = `${feeder.prefix.replace(/_ppf_r361s_feeder$/, "_feeder")}_set_meal_schedule`;
+    const actionService = this._resolveEsphomeService("set_meal_schedule");
     this._callService("esphome", actionService, {
       plan: 1,
       meal: meal.meal,
@@ -361,7 +387,7 @@ class PawsyncFeederCard extends HTMLElement {
     const mealIdx = mealData.meal - 1;
     this._localSchedules[feeder.prefix][mealIdx] = { ...mealData };
 
-    const actionService = `${feeder.prefix.replace(/_ppf_r361s_feeder$/, "_feeder")}_set_meal_schedule`;
+    const actionService = this._resolveEsphomeService("set_meal_schedule");
     this._callService("esphome", actionService, {
       plan: 1,
       meal: mealData.meal,
