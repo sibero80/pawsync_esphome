@@ -187,6 +187,8 @@ def test_sanitize_mac():
 def test_backup_persistence_permissions(tmp_path):
     """Assert backups write to /config/pawsync_backups/ with POSIX 0600 permissions."""
     mock_hass = MagicMock()
+    mock_hass.async_add_executor_job = AsyncMock(return_value=False)
+    mock_hass.async_create_task = MagicMock()
     mock_hass.config.path.side_effect = lambda rel: str(tmp_path / rel)
 
     stock_path, cal_path = get_backup_paths(mock_hass, "AA:BB:CC:DD:EE:FF")
@@ -214,6 +216,8 @@ def test_backup_persistence_permissions(tmp_path):
 async def test_async_harvest_factory_backup_success(tmp_path):
     """Test full automated harvest pipeline across HTTP streaming mock."""
     mock_hass = MagicMock()
+    mock_hass.async_add_executor_job = AsyncMock(return_value=False)
+    mock_hass.async_create_task = MagicMock()
     mock_hass.config.path.side_effect = lambda rel: str(tmp_path / rel)
 
     raw_stock = create_mock_esp_idf_binary(project="vesync_feeder", version="v1.0.29", pad_bytes=512)
@@ -271,6 +275,8 @@ async def test_async_harvest_factory_backup_success(tmp_path):
 async def test_async_harvest_slot_overwritten(tmp_path):
     """Verify harvester detects and halts if stock partition was already overwritten."""
     mock_hass = MagicMock()
+    mock_hass.async_add_executor_job = AsyncMock(return_value=False)
+    mock_hass.async_create_task = MagicMock()
     mock_hass.config.path.side_effect = lambda rel: str(tmp_path / rel)
 
     mock_session = MagicMock()
@@ -311,6 +317,8 @@ async def test_async_harvest_slot_overwritten(tmp_path):
 async def test_diagnostic_sensors_lifecycle(tmp_path):
     """Test state reporting for backup status and alternate slot sensors."""
     mock_hass = MagicMock()
+    mock_hass.async_add_executor_job = AsyncMock(return_value=False)
+    mock_hass.async_create_task = MagicMock()
     mock_hass.config.path.side_effect = lambda rel: str(tmp_path / rel)
     mock_hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
 
@@ -359,6 +367,8 @@ async def test_diagnostic_sensors_lifecycle(tmp_path):
 async def test_restore_stock_service_guards(tmp_path):
     """Test safety guards on service pawsync.restore_stock_firmware."""
     mock_hass = MagicMock()
+    mock_hass.async_add_executor_job = AsyncMock(return_value=False)
+    mock_hass.async_create_task = MagicMock()
     mock_hass.config.path.side_effect = lambda rel: str(tmp_path / rel)
     mock_hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
     mock_hass.services.has_service.return_value = False
@@ -412,6 +422,8 @@ async def test_restore_stock_service_guards(tmp_path):
 async def test_options_flow_manual_import_success(tmp_path):
     """Test manual stock binary import via OptionsFlow saves to storage with 0600."""
     mock_hass = MagicMock()
+    mock_hass.async_add_executor_job = AsyncMock(return_value=False)
+    mock_hass.async_create_task = MagicMock()
     mock_hass.config.path.side_effect = lambda rel: str(tmp_path / rel)
     mock_hass.config.units.is_metric = True
     mock_hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
@@ -439,6 +451,8 @@ async def test_options_flow_manual_import_success(tmp_path):
 async def test_options_flow_manual_import_file_not_found(tmp_path):
     """Test manual import with non-existent file returns validation error."""
     mock_hass = MagicMock()
+    mock_hass.async_add_executor_job = AsyncMock(return_value=False)
+    mock_hass.async_create_task = MagicMock()
     mock_hass.config.path.side_effect = lambda rel: str(tmp_path / rel)
     mock_hass.config.units.is_metric = True
 
@@ -458,6 +472,8 @@ async def test_options_flow_manual_import_file_not_found(tmp_path):
 async def test_options_flow_manual_import_invalid_image(tmp_path):
     """Test manual import with corrupted binary returns validation error."""
     mock_hass = MagicMock()
+    mock_hass.async_add_executor_job = AsyncMock(return_value=False)
+    mock_hass.async_create_task = MagicMock()
     mock_hass.config.path.side_effect = lambda rel: str(tmp_path / rel)
     mock_hass.config.units.is_metric = True
     mock_hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
@@ -514,6 +530,8 @@ def test_strip_trailing_padding_preserves_sha256_ending_in_ff():
 async def test_restore_stock_multi_feeder_disambiguation(tmp_path):
     """Test restore service raises error if multiple feeders exist and target is omitted (FIND-05)."""
     mock_hass = MagicMock()
+    mock_hass.async_add_executor_job = AsyncMock(return_value=False)
+    mock_hass.async_create_task = MagicMock()
     mock_hass.config.path.side_effect = lambda rel: str(tmp_path / rel)
     mock_hass.services.has_service.return_value = False
 
@@ -547,6 +565,8 @@ async def test_restore_stock_multi_feeder_disambiguation(tmp_path):
 async def test_update_platform_overwrite_protection_blocked(tmp_path):
     """Test update platform blocks OTA flash when stock is intact, overwrite switch is OFF, and no backup exists (FIND-03)."""
     mock_hass = MagicMock()
+    mock_hass.async_add_executor_job = AsyncMock(return_value=False)
+    mock_hass.async_create_task = MagicMock()
     mock_hass.config.path.side_effect = lambda rel: str(tmp_path / rel)
     mock_hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
 
@@ -586,4 +606,80 @@ async def test_update_platform_overwrite_protection_blocked(tmp_path):
                 await entity.async_install()
             assert "Firmware update blocked" in str(excinfo.value)
             assert "Allow Overwriting Stock Slot" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_sensor_auto_triggers_backup_when_stock_intact():
+    """Verify PawSyncStockBackupStatusSensor automatically downloads backup when stock intact."""
+    from custom_components.pawsync.sensor import PawSyncStockBackupStatusSensor
+    from custom_components.pawsync.const import (
+        BACKUP_STATUS_BACKED_UP,
+        BACKUP_STATUS_PENDING,
+        CONF_HOST,
+    )
+
+    mock_hass = MagicMock()
+    mock_hass.async_add_executor_job = AsyncMock(return_value=False)
+    mock_hass.async_create_task = MagicMock()
+
+    entry = MagicMock()
+    entry.entry_id = "test_entry_sensor"
+    entry.title = "Pawsync Feeder"
+    entry.data = {
+        CONF_HOST: "192.168.1.50",
+        "feeder_info": {"mac": "AA:BB:CC:11:22:33", "ip": "192.168.1.50", "name": "Feeder"},
+    }
+    entry.options = {}
+
+    sensor = PawSyncStockBackupStatusSensor(mock_hass, entry)
+    sensor._host = "192.168.1.50"
+    sensor._mac = "AA:BB:CC:11:22:33"
+
+    class MockResp:
+        def __init__(self, json_data):
+            self._json_data = json_data
+            self.status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def json(self):
+            return self._json_data
+
+    mock_session = MagicMock()
+    mock_session.get.return_value = MockResp({"stock_intact": True, "slot": "ota_1", "version": "v1.0.29"})
+
+    # Mock async_ensure_factory_backup
+    mock_backup_res = {
+        "status": BACKUP_STATUS_BACKED_UP,
+        "stock_size": 978688,
+        "cal_size": 16384,
+    }
+
+    tasks_created = []
+
+    def _capture_task(coro):
+        tasks_created.append(coro)
+        return MagicMock()
+
+    mock_hass.async_create_task = MagicMock(side_effect=_capture_task)
+
+    with patch("custom_components.pawsync.sensor.async_get_clientsession", return_value=mock_session):
+        with patch("custom_components.pawsync.sensor.has_valid_local_backup", return_value=False):
+            with patch("custom_components.pawsync.backup_manager.async_ensure_factory_backup", return_value=mock_backup_res):
+                # When async_update runs, it should discover stock_intact and schedule backup
+                await sensor.async_update()
+                assert sensor.native_value == BACKUP_STATUS_PENDING
+                assert sensor._backup_in_progress is True
+                assert len(tasks_created) == 1
+
+                # Clean up / await captured task
+                await tasks_created[0]
+                assert sensor.native_value == BACKUP_STATUS_BACKED_UP
+                assert sensor._backup_verified is True
+                assert sensor.extra_state_attributes["local_backup_verified"] is True
+
 

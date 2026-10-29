@@ -89,6 +89,28 @@ class PawSyncStockBackupStatusSensor(SensorEntity):
         self._attr_native_value = BACKUP_STATUS_PENDING
         self._attr_extra_state_attributes: dict[str, Any] = {}
         self._backup_verified: bool = False
+        self._backup_in_progress: bool = False
+
+    async def _async_trigger_backup(self, host: str, mac: str) -> None:
+        """Trigger background factory backup and update entity when complete."""
+        try:
+            _LOGGER.info("Stock partition intact on %s; triggering automatic factory backup...", host)
+            from .backup_manager import async_ensure_factory_backup
+            result = await async_ensure_factory_backup(self.hass, host, mac)
+            if result.get("status") == BACKUP_STATUS_BACKED_UP:
+                self._backup_verified = True
+                self._attr_native_value = BACKUP_STATUS_BACKED_UP
+                self._attr_extra_state_attributes = {
+                    "local_backup_verified": True,
+                    "stock_size": result.get("stock_size"),
+                    "cal_size": result.get("cal_size"),
+                }
+                self.async_write_ha_state()
+                _LOGGER.info("Automatic factory backup succeeded for %s!", mac)
+        except Exception as err:
+            _LOGGER.warning("Automatic factory backup error for %s: %s", host, err)
+        finally:
+            self._backup_in_progress = False
 
     async def async_update(self) -> None:
         """Fetch current backup status."""
@@ -135,6 +157,9 @@ class PawSyncStockBackupStatusSensor(SensorEntity):
                 "slot": status.get("slot"),
                 "version": status.get("version"),
             }
+            if not self._backup_in_progress and self._mac and host:
+                self._backup_in_progress = True
+                self.hass.async_create_task(self._async_trigger_backup(host, self._mac))
 
 
 class PawSyncAlternateSlotSensor(SensorEntity):

@@ -17,6 +17,7 @@ from .const import (
     CONF_HOST,
     CONF_SELECTED_FEEDER,
     DOMAIN,
+    TRANSITION_NOISE_PSK,
     generate_noise_psk,
 )
 from .esphome_provisioner import async_auto_adopt_esphome
@@ -117,7 +118,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # 3. Trigger automated ESPHome background adoption if host is known
     if host:
         if not device_noise_psk:
-            device_noise_psk = generate_noise_psk()
+            device_noise_psk = TRANSITION_NOISE_PSK
             hass.config_entries.async_update_entry(
                 entry,
                 data={**entry.data, "noise_psk": device_noise_psk},

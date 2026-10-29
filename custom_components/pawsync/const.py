@@ -2,7 +2,7 @@
 
 DOMAIN = "pawsync"
 NAME = "Pawsync Smart Pet Feeder"
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 
 # Cloud API Endpoints
 PAWSYNC_API_BASE = "https://smartapi.pawsync.com"
@@ -34,7 +34,7 @@ FLASH_METHOD_SKIP = "manual_skip"
 # Frontend / Card
 CARD_FILENAME = "pawsync-feeder-card.js"
 CARD_URL_PATH = "/pawsync/pawsync-feeder-card.js"
-CARD_VERSION = "1.3.0"
+CARD_VERSION = "1.3.1"
 
 # Unit System Preferences
 CONF_UNIT_SYSTEM = "unit_system"
@@ -54,8 +54,9 @@ MAX_FIRMWARE_SIZE = 1310720  # 1.25 MB (0x140000)
 # Default Defaults
 DEFAULT_COUNTRY_CODE = "US"
 DEFAULT_TIME_ZONE = "America/New_York"
-# Deprecated: Static legacy fallback retired in v1.1.3; all setups must use generate_noise_psk()
-DEFAULT_NOISE_PSK = None
+# Transition Noise PSK: Used by the pre-compiled pawsync_ota_update.bin transition container
+TRANSITION_NOISE_PSK = "OjRSzAh3ADVkNjmBs5+K6GnOY0tGoSqlniJvsmolVeE="
+DEFAULT_NOISE_PSK = TRANSITION_NOISE_PSK
 
 # Factory Backup & Recovery Constants
 BACKUP_HTTP_PORT = 8088

@@ -8,7 +8,11 @@ import os
 import re
 from typing import Any
 
-from .const import generate_noise_psk, generate_ota_password
+from .const import (
+    TRANSITION_NOISE_PSK,
+    generate_noise_psk,
+    generate_ota_password,
+)
 from .pawsync_api import resolve_ip_from_mac
 
 _LOGGER = logging.getLogger(__name__)
@@ -161,6 +165,14 @@ async def _advance_esphome_flow(hass: Any, flow_id: str, step_id: str | None, no
                 _LOGGER.info("ESPHome flow %s encryption result: %s", flow_id, res.get("type"))
                 if _is_flow_type(res, "create_entry", "abort"):
                     return True
+                if res.get("step_id") == "encryption_key" and noise_psk != TRANSITION_NOISE_PSK:
+                    _LOGGER.info("Retrying with TRANSITION_NOISE_PSK for flow %s...", flow_id)
+                    res = await hass.config_entries.flow.async_configure(
+                        flow_id,
+                        user_input={"noise_psk": TRANSITION_NOISE_PSK},
+                    )
+                    if _is_flow_type(res, "create_entry", "abort"):
+                        return True
                 step_id = res.get("step_id")
 
             elif step_id == "authenticate":
@@ -192,7 +204,7 @@ async def async_auto_adopt_esphome(
     noise_psk: str | None = None,
     mac: str | None = None,
     feeder_name: str = "Pawsync Feeder",
-    max_attempts: int = 40,
+    max_attempts: int = 120,
     delay: float = 3.0,
 ) -> bool:
     """Automatically adopt the ESPHome feeder device into Home Assistant.
@@ -200,7 +212,7 @@ async def async_auto_adopt_esphome(
     Monitors network connectivity to port 6053 and auto-completes the ESPHome
     config flow with the pre-configured Noise PSK encryption key.
     """
-    effective_psk = noise_psk or generate_noise_psk()
+    effective_psk = noise_psk or TRANSITION_NOISE_PSK
     _LOGGER.info("Starting automated ESPHome adoption monitor for host: %s (MAC: %s)", host, mac)
     clean_mac = mac.replace(":", "").replace("-", "").strip().lower() if mac else ""
 
