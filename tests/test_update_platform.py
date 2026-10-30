@@ -467,3 +467,135 @@ async def test_service_flash_latest_firmware():
         await registered_services["flash_latest_firmware"](call)
         assert mock_install.called
 
+
+@pytest.mark.asyncio
+async def test_update_inherits_and_syncs_esphome_entry_key():
+    """Test update inherits noise_psk from active ESPHome entry and auto-syncs."""
+    hass = MagicMock()
+    hass.config.config_dir = "/tmp"
+    hass.async_add_executor_job = AsyncMock(side_effect=lambda fn, *args: fn(*args))
+    hass.config_entries.async_reload = AsyncMock()
+
+    # Active ESPHome integration entry
+    esphome_entry = MagicMock()
+    esphome_entry.entry_id = "esphome_entry_123"
+    esphome_entry.title = "Smart Pet Feeder"
+    esphome_entry.unique_id = "aabbccddeeff"
+    esphome_entry.data = {
+        "host": "192.168.1.50",
+        "noise_psk": "ActiveESPHomeKey123=",
+        "password": "OldOtaPassword",
+    }
+
+    def mock_async_entries(domain):
+        if domain == "esphome":
+            return [esphome_entry]
+        return []
+
+    hass.config_entries.async_entries = mock_async_entries
+
+    # PawSync entry without noise_psk
+    pawsync_entry = MagicMock()
+    pawsync_entry.title = "Pawsync Feeder"
+    pawsync_entry.data = {
+        "feeder_info": {"mac": "AA:BB:CC:DD:EE:FF", "name": "Kitchen Feeder"},
+        "host": "192.168.1.50",
+        "ssid": "MyWiFi",
+        "wifi_password": "MyPass",
+        "ota_password": "NewOtaPassword",
+    }
+    pawsync_entry.options = {}
+
+    dev_reg = MagicMock()
+    mock_dev = MagicMock()
+    mock_dev.id = "dev_123"
+    dev_reg.async_get_device.return_value = mock_dev
+
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tf:
+        tf.write(b"\x01" + (b"\x00" * 128) + b"\xe9" + (b"\x00" * 1000))
+        dummy_fw = tf.name
+
+    try:
+        with patch("custom_components.pawsync.update.dr.async_get", return_value=dev_reg), \
+             patch("custom_components.pawsync.update.async_ensure_firmware_binary", new_callable=AsyncMock, return_value=dummy_fw), \
+             patch("custom_components.pawsync.update.patch_raw_esp32_credentials", return_value=b"\xe9" + (b"\x00" * 1000)) as mock_patch, \
+             patch("custom_components.pawsync.update.async_flash_esphome_ota", new_callable=AsyncMock, return_value=True) as mock_flash, \
+             patch("custom_components.pawsync.update.async_write_feeder_secrets", new_callable=AsyncMock) as mock_write_sec:
+
+            entity = PawSyncFirmwareUpdateEntity(hass, pawsync_entry)
+            await entity.async_install()
+
+            # Verify that update INHERITED the key from active ESPHome entry!
+            assert mock_patch.call_args.kwargs["noise_psk"] == "ActiveESPHomeKey123="
+            # Verify secrets were written to secrets.yaml
+            assert mock_write_sec.called
+            assert mock_write_sec.call_args.kwargs["secrets_dict"]["noise_psk"] == "ActiveESPHomeKey123="
+    finally:
+        if os.path.exists(dummy_fw):
+            os.remove(dummy_fw)
+
+
+@pytest.mark.asyncio
+async def test_update_auto_syncs_new_key_to_esphome_entry():
+    """Test update pushes updated key to ESPHome entry and reloads if key changed."""
+    hass = MagicMock()
+    hass.config.config_dir = "/tmp"
+    hass.async_add_executor_job = AsyncMock(side_effect=lambda fn, *args: fn(*args))
+    hass.config_entries.async_reload = AsyncMock()
+
+    # Active ESPHome integration entry with missing/cleared key (e.g. prompt pending)
+    esphome_entry = MagicMock()
+    esphome_entry.entry_id = "esphome_entry_456"
+    esphome_entry.title = "Smart Pet Feeder"
+    esphome_entry.unique_id = "aabbccddeeff"
+    esphome_entry.data = {
+        "host": "192.168.1.50",
+        "noise_psk": None,
+    }
+
+    def mock_async_entries(domain):
+        if domain == "esphome":
+            return [esphome_entry]
+        return []
+
+    hass.config_entries.async_entries = mock_async_entries
+
+    # PawSync entry with fresh key
+    pawsync_entry = MagicMock()
+    pawsync_entry.title = "Pawsync Feeder"
+    pawsync_entry.data = {
+        "feeder_info": {"mac": "AA:BB:CC:DD:EE:FF", "name": "Kitchen Feeder"},
+        "host": "192.168.1.50",
+        "noise_psk": "NewDesiredKey123=",
+        "ota_password": "NewOtaPassword",
+    }
+    pawsync_entry.options = {}
+
+    dev_reg = MagicMock()
+    dev_reg.async_get_device.return_value = MagicMock()
+
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tf:
+        tf.write(b"\x01" + (b"\x00" * 128) + b"\xe9" + (b"\x00" * 1000))
+        dummy_fw = tf.name
+
+    try:
+        with patch("custom_components.pawsync.update.dr.async_get", return_value=dev_reg), \
+             patch("custom_components.pawsync.update.async_ensure_firmware_binary", new_callable=AsyncMock, return_value=dummy_fw), \
+             patch("custom_components.pawsync.update.patch_raw_esp32_credentials", return_value=b"\xe9" + (b"\x00" * 1000)), \
+             patch("custom_components.pawsync.update.async_flash_esphome_ota", new_callable=AsyncMock, return_value=True), \
+             patch("custom_components.pawsync.update.async_write_feeder_secrets", new_callable=AsyncMock):
+
+            entity = PawSyncFirmwareUpdateEntity(hass, pawsync_entry)
+            await entity.async_install()
+
+            # Verify that ESPHome entry was updated with the new key and reloaded
+            assert hass.config_entries.async_update_entry.called
+            assert hass.config_entries.async_reload.called
+            assert hass.config_entries.async_reload.call_args[0][0] == "esphome_entry_456"
+    finally:
+        if os.path.exists(dummy_fw):
+            os.remove(dummy_fw)
+
+

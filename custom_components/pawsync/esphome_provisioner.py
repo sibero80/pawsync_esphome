@@ -385,12 +385,12 @@ async def _advance_esphome_flow(hass: Any, flow_id: str, step_id: str | None, no
             if not step_id:
                 break
 
-            if step_id == "discovery_confirm":
-                _LOGGER.info("Accepting ESPHome discovery confirmation for flow %s...", flow_id)
+            if step_id in ("discovery_confirm", "reauth_confirm", "reauth"):
+                _LOGGER.info("Accepting ESPHome %s for flow %s...", step_id, flow_id)
                 res = await hass.config_entries.flow.async_configure(flow_id, user_input={})
-                _LOGGER.debug("Discovery confirm result: %s", res)
-                if _is_flow_type(res, "create_entry"):
-                    _LOGGER.info("ESPHome entry created directly from discovery confirm: %s", flow_id)
+                _LOGGER.debug("%s result: %s", step_id, res)
+                if _is_flow_type(res, "create_entry", "abort"):
+                    _LOGGER.info("ESPHome flow completed directly from %s: %s", step_id, flow_id)
                     return True
                 step_id = res.get("step_id")
 
@@ -459,6 +459,17 @@ async def async_auto_adopt_esphome(
                 entry_host = entry.data.get("host")
                 entry_mac = (entry.unique_id or "").replace(":", "").replace("-", "").strip().lower()
                 if (host and entry_host == host) or (clean_mac and entry_mac and entry_mac == clean_mac):
+                    if effective_psk and entry.data.get("noise_psk") != effective_psk:
+                        _LOGGER.info(
+                            "Auto-syncing active Noise PSK to ESPHome entry %s (%s)",
+                            entry.title,
+                            entry.entry_id,
+                        )
+                        new_data = dict(entry.data)
+                        new_data["noise_psk"] = effective_psk
+                        hass.config_entries.async_update_entry(entry, data=new_data)
+                        if hasattr(hass.config_entries, "async_reload"):
+                            await hass.config_entries.async_reload(entry.entry_id)
                     _LOGGER.info(
                         "ESPHome entry already active in Home Assistant for %s (%s)",
                         entry.title,
@@ -468,9 +479,17 @@ async def async_auto_adopt_esphome(
         except Exception as entry_err:
             _LOGGER.debug("Note inspecting active ESPHome entries: %s", entry_err)
 
-        # 2. Check for in-progress zeroconf discovery flows for esphome
+        # 2. Check for in-progress zeroconf discovery or reauth flows for esphome
         try:
-            progress_flows = hass.config_entries.flow.async_progress_by_handler("esphome")
+            progress_flows = []
+            if hasattr(hass.config_entries, "flow"):
+                if hasattr(hass.config_entries.flow, "async_progress_by_handler"):
+                    progress_flows = hass.config_entries.flow.async_progress_by_handler("esphome")
+                elif hasattr(hass.config_entries.flow, "async_progress"):
+                    progress_flows = [
+                        f for f in hass.config_entries.flow.async_progress()
+                        if f.get("handler") == "esphome"
+                    ]
             for flow in progress_flows:
                 flow_id = flow.get("flow_id")
                 step_id = flow.get("step_id")

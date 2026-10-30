@@ -47,6 +47,7 @@ from .backup_manager import save_cloud_backup
 from .esphome_provisioner import (
     async_auto_adopt_esphome,
     async_provision_esphome_yaml,
+    async_read_feeder_secrets,
     write_feeder_secrets_sync,
 )
 from .firmware_downloader import async_ensure_firmware_binary
@@ -595,7 +596,23 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             name = user_input.get("name", "Pawsync Feeder").strip()
             host = user_input[CONF_HOST].strip()
             unit_system = user_input.get(CONF_UNIT_SYSTEM, default_unit)
-            device_noise_psk = generate_noise_psk()
+            device_noise_psk = user_input.get("noise_psk", "").strip()
+
+            # 1. Inspect existing active ESPHome entries matching host IP
+            if not device_noise_psk:
+                for esphome_entry in self.hass.config_entries.async_entries("esphome"):
+                    if esphome_entry.data.get("host") == host:
+                        device_noise_psk = esphome_entry.data.get("noise_psk") or ""
+                        break
+
+            # 2. Inspect secrets.yaml for existing api_encryption_key or feeder PSK
+            if not device_noise_psk:
+                secrets = await async_read_feeder_secrets(self.hass)
+                device_noise_psk = secrets.get("noise_psk") or ""
+
+            # 3. Only generate a new PSK if completely unassigned
+            if not device_noise_psk:
+                device_noise_psk = generate_noise_psk()
 
             self.hass.async_create_task(
                 async_auto_adopt_esphome(
@@ -626,6 +643,7 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             {
                 vol.Required("name", default="Pawsync Feeder"): str,
                 vol.Required(CONF_HOST): str,
+                vol.Optional("noise_psk"): str,
                 vol.Required(CONF_UNIT_SYSTEM, default=default_unit): vol.In(
                     {
                         UNIT_SYSTEM_METRIC: "Metric (Grams, Liters)",

@@ -36,7 +36,12 @@ from .const import (
     generate_noise_psk,
 )
 from .espota_client import async_flash_esphome_ota, sanitize_firmware_binary
-from .esphome_provisioner import read_feeder_secrets_sync, resolve_arp_ip
+from .esphome_provisioner import (
+    async_auto_adopt_esphome,
+    async_write_feeder_secrets,
+    read_feeder_secrets_sync,
+    resolve_arp_ip,
+)
 from .firmware_downloader import async_ensure_firmware_binary
 from .firmware_patcher import patch_raw_esp32_credentials
 
@@ -190,18 +195,20 @@ class PawSyncFirmwareUpdateEntity(UpdateEntity):
         self._attr_update_percentage = 0
         self.async_write_ha_state()
 
-        # 1. Resolve target host IP
+        # 1. Resolve target host IP and locate matching ESPHome integration entry
         host = self._host or self._entry.options.get(CONF_HOST) or self._entry.data.get(CONF_HOST)
         if not host and self._mac:
             host = resolve_arp_ip(self._mac, hass=self.hass)
 
-        if not host:
-            clean_mac = (self._mac or "").replace(":", "").replace("-", "").strip().lower()
-            for esphome_entry in self.hass.config_entries.async_entries("esphome"):
-                entry_mac = (esphome_entry.unique_id or "").replace(":", "").replace("-", "").strip().lower()
-                if clean_mac and clean_mac == entry_mac:
+        matched_esphome_entry = None
+        clean_mac = (self._mac or "").replace(":", "").replace("-", "").strip().lower()
+        for esphome_entry in self.hass.config_entries.async_entries("esphome"):
+            entry_mac = (esphome_entry.unique_id or "").replace(":", "").replace("-", "").strip().lower()
+            if (clean_mac and clean_mac == entry_mac) or (host and esphome_entry.data.get("host") == host):
+                matched_esphome_entry = esphome_entry
+                if not host:
                     host = esphome_entry.data.get("host")
-                    break
+                break
 
         if not host:
             self._attr_in_progress = False
@@ -265,15 +272,20 @@ class PawSyncFirmwareUpdateEntity(UpdateEntity):
                 read_feeder_secrets_sync, hass_config_dir, self._mac
             )
 
+            # Prioritize active ESPHome entry key to guarantee seamless zero-prompt reconnection
             device_noise_psk = (
-                self._entry.data.get("noise_psk")
+                (matched_esphome_entry.data.get("noise_psk") if matched_esphome_entry and matched_esphome_entry.data.get("noise_psk") else None)
+                or self._entry.data.get("noise_psk")
                 or self._entry.options.get("noise_psk")
                 or secrets.get("noise_psk")
-                or generate_noise_psk()
             )
+            if not device_noise_psk:
+                device_noise_psk = generate_noise_psk()
+
             device_ota_password = (
                 self._entry.data.get("ota_password")
                 or self._entry.options.get("ota_password")
+                or (matched_esphome_entry.data.get("password") if matched_esphome_entry else None)
                 or secrets.get("ota_password")
             )
             wifi_ssid = (
@@ -337,6 +349,55 @@ class PawSyncFirmwareUpdateEntity(UpdateEntity):
             if wifi_password and new_data.get(CONF_WIFI_PASSWORD) != wifi_password:
                 new_data[CONF_WIFI_PASSWORD] = wifi_password
             self.hass.config_entries.async_update_entry(self._entry, data=new_data)
+
+            # Synchronize active key with ESPHome config entry to prevent encryption/reauth prompts
+            if matched_esphome_entry and device_noise_psk:
+                if matched_esphome_entry.data.get("noise_psk") != device_noise_psk:
+                    _LOGGER.info(
+                        "Synchronizing active Noise PSK to ESPHome entry %s (%s)",
+                        matched_esphome_entry.title,
+                        matched_esphome_entry.entry_id,
+                    )
+                    new_esphome_data = dict(matched_esphome_entry.data)
+                    new_esphome_data["noise_psk"] = device_noise_psk
+                    if device_ota_password and new_esphome_data.get("password") != device_ota_password:
+                        new_esphome_data["password"] = device_ota_password
+                    self.hass.config_entries.async_update_entry(matched_esphome_entry, data=new_esphome_data)
+                    if hasattr(self.hass.config_entries, "async_reload"):
+                        await self.hass.config_entries.async_reload(matched_esphome_entry.entry_id)
+
+            # Persist secrets to /config/esphome/secrets.yaml for ESPHome dashboard parity
+            try:
+                secrets_to_save: dict[str, str] = {}
+                if device_noise_psk:
+                    secrets_to_save["noise_psk"] = device_noise_psk
+                if device_ota_password:
+                    secrets_to_save["ota_password"] = device_ota_password
+                if wifi_ssid:
+                    secrets_to_save["wifi_ssid"] = wifi_ssid
+                if wifi_password:
+                    secrets_to_save["wifi_password"] = wifi_password
+                if secrets_to_save and self._mac:
+                    await async_write_feeder_secrets(
+                        hass_config_dir,
+                        mac=self._mac,
+                        secrets_dict=secrets_to_save,
+                    )
+            except Exception as err:
+                _LOGGER.debug("Could not auto-sync secrets to secrets.yaml: %s", err)
+
+            # Launch background auto-adopt / reauth monitor in case of pending flows
+            self.hass.async_create_task(
+                async_auto_adopt_esphome(
+                    self.hass,
+                    host=host,
+                    noise_psk=device_noise_psk,
+                    mac=self._mac,
+                    feeder_name=self._name,
+                    max_attempts=30,
+                    delay=2.0,
+                )
+            )
 
             # Update Device Registry
             dev_reg = dr.async_get(self.hass)
