@@ -185,17 +185,22 @@ async def test_esphome_ota_flasher_protocol():
 
 @pytest.mark.asyncio
 async def test_update_install_execution():
-    """Test update entity async_install flow end-to-end."""
+    """Test update entity async_install flow end-to-end with credential patching."""
     hass = MagicMock()
     hass.config.config_dir = "/tmp"
-    hass.async_add_executor_job = AsyncMock(side_effect=lambda fn: fn())
+    hass.async_add_executor_job = AsyncMock(side_effect=lambda fn, *args: fn(*args))
 
     entry = MagicMock()
     entry.title = "Pawsync Feeder"
     entry.data = {
         "feeder_info": {"mac": "AA:BB:CC:DD:EE:FF", "name": "Kitchen Feeder"},
         "host": "192.168.1.50",
+        "ssid": "MyWiFi",
+        "wifi_password": "MyPass",
+        "noise_psk": "MyFeederPSK123=",
+        "ota_password": "MyOtaPassword456",
     }
+    entry.options = {}
 
     dev_reg = MagicMock()
     mock_dev = MagicMock()
@@ -211,6 +216,7 @@ async def test_update_install_execution():
     try:
         with patch("custom_components.pawsync.update.dr.async_get", return_value=dev_reg), \
              patch("custom_components.pawsync.update.async_ensure_firmware_binary", new_callable=AsyncMock, return_value=dummy_fw), \
+             patch("custom_components.pawsync.update.patch_raw_esp32_credentials", return_value=b"\xe9" + (b"\x00" * 1000)) as mock_patch, \
              patch("custom_components.pawsync.update.async_flash_esphome_ota", new_callable=AsyncMock) as mock_flash:
             mock_flash.return_value = True
 
@@ -218,6 +224,13 @@ async def test_update_install_execution():
             assert entity.installed_version == "1.0.8"
 
             await entity.async_install()
+
+            assert mock_patch.called
+            # Verify credentials were passed to patch_raw_esp32_credentials
+            assert mock_patch.call_args.kwargs["ssid"] == "MyWiFi"
+            assert mock_patch.call_args.kwargs["password"] == "MyPass"
+            assert mock_patch.call_args.kwargs["noise_psk"] == "MyFeederPSK123="
+            assert mock_patch.call_args.kwargs["ota_password"] == "MyOtaPassword456"
 
             assert mock_flash.called
             assert entity.installed_version == entity.latest_version
@@ -331,4 +344,126 @@ async def test_esphome_ota_flasher_sha256_auth_protocol():
             await server_task
         except asyncio.CancelledError:
             pass
+
+
+@pytest.mark.asyncio
+async def test_esphome_ota_flasher_sha256_fallback_auth():
+    """Test OTA fallback authentication using placeholder password when primary password fails."""
+    payload = b"\xe9" + (b"FALLBACK_AUTH_FIRMWARE" * 50)
+    primary_wrong_password = "WrongPassword123"
+    fallback_correct_password = "PLACEHOLDER_OTA_PASSWORD_32B____"
+    fallback_auth_seen = False
+
+    async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        nonlocal fallback_auth_seen
+
+        magic = await reader.readexactly(5)
+        assert magic == MAGIC_BYTES
+
+        writer.write(bytes([RESPONSE_OK, 0x02]))
+        await writer.drain()
+
+        await reader.readexactly(1)
+        writer.write(bytes([0x46]))
+        await writer.drain()
+
+        server_nonce = "abcdef1234567890" * 4
+        writer.write(bytes([RESPONSE_REQUEST_SHA256_AUTH]) + server_nonce.encode("ascii"))
+        await writer.drain()
+
+        auth_bytes = await reader.readexactly(128)
+        cnonce = auth_bytes[:64].decode("ascii")
+        client_hash = auth_bytes[64:].decode("ascii")
+
+        # Verify whether client tried fallback password
+        expected_hash = hashlib.sha256(
+            fallback_correct_password.encode("utf-8") + server_nonce.encode("ascii") + cnonce.encode("ascii")
+        ).hexdigest()
+
+        if client_hash == expected_hash:
+            fallback_auth_seen = True
+            writer.write(bytes([RESPONSE_AUTH_OK]))
+            await writer.drain()
+
+            await reader.readexactly(4)
+            writer.write(bytes([RESPONSE_UPDATE_PREPARE_OK]))
+            await writer.drain()
+
+            await reader.readexactly(32)
+            writer.write(bytes([RESPONSE_BIN_MD5_OK]))
+            await writer.drain()
+
+            remaining = len(payload)
+            while remaining > 0:
+                chunk = await reader.readexactly(min(8192, remaining))
+                remaining -= len(chunk)
+                writer.write(bytes([RESPONSE_CHUNK_OK]))
+                await writer.drain()
+
+            writer.write(bytes([RESPONSE_RECEIVE_OK, RESPONSE_UPDATE_END_OK]))
+            await writer.drain()
+            await reader.readexactly(1)
+        else:
+            # Reject primary wrong password
+            writer.write(bytes([0xFF]))
+            await writer.drain()
+
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(handle_client, "127.0.0.1", 0)
+    server_port = server.sockets[0].getsockname()[1]
+    server_task = asyncio.create_task(server.serve_forever())
+
+    try:
+        success = await async_flash_esphome_ota(
+            host="127.0.0.1",
+            firmware_binary=payload,
+            port=server_port,
+            ota_password=primary_wrong_password,
+        )
+        assert success is True
+        assert fallback_auth_seen is True
+    finally:
+        server.close()
+        await server.wait_closed()
+        server_task.cancel()
+        try:
+            await server_task
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_service_flash_latest_firmware():
+    """Test flash_latest_firmware service handler."""
+    from custom_components.pawsync.services import async_setup_services
+
+    hass = MagicMock()
+    registered_services = {}
+
+    def mock_register(domain, service, handler, schema=None):
+        registered_services[service] = handler
+
+    hass.services.has_service.return_value = False
+    hass.services.async_register = mock_register
+
+    entry = MagicMock()
+    entry.title = "Test Feeder"
+    entry.data = {
+        "feeder_info": {"mac": "94:A9:90:4C:18:D8", "ip": "192.168.1.45"},
+        "mac_address": "94:A9:90:4C:18:D8",
+        "host": "192.168.1.45",
+    }
+    hass.config_entries.async_entries.return_value = [entry]
+
+    await async_setup_services(hass)
+    assert "flash_latest_firmware" in registered_services
+
+    call = MagicMock()
+    call.data = {"host": "192.168.1.45"}
+
+    with patch("custom_components.pawsync.update.PawSyncFirmwareUpdateEntity.async_install", new_callable=AsyncMock) as mock_install:
+        await registered_services["flash_latest_firmware"](call)
+        assert mock_install.called
 

@@ -147,22 +147,68 @@ async def async_flash_esphome_ota(
         # 4. Auth check
         auth_resp = (await asyncio.wait_for(reader.readexactly(1), timeout=10.0))[0]
         if auth_resp == RESPONSE_REQUEST_SHA256_AUTH:
-            if not ota_password:
-                _LOGGER.error("Device at %s requires OTA password, but none provided", host)
+            passwords_to_try: list[str] = []
+            if ota_password:
+                passwords_to_try.append(ota_password)
+            # Default placeholder fallback for feeders previously flashed with unpatched image
+            if "PLACEHOLDER_OTA_PASSWORD_32B____" not in passwords_to_try:
+                passwords_to_try.append("PLACEHOLDER_OTA_PASSWORD_32B____")
+
+            passed_auth = False
+            for idx, candidate_pass in enumerate(passwords_to_try):
+                if idx > 0:
+                    try:
+                        writer.close()
+                        await writer.wait_closed()
+                    except Exception:
+                        pass
+                    try:
+                        reader, writer = await asyncio.wait_for(
+                            asyncio.open_connection(host, port), timeout=timeout
+                        )
+                        writer.write(MAGIC_BYTES)
+                        await writer.drain()
+                        header = await asyncio.wait_for(reader.readexactly(2), timeout=10.0)
+                        if header[0] != RESPONSE_OK:
+                            return False
+                        writer.write(bytes([features_to_send]))
+                        await writer.drain()
+                        features_resp = (await asyncio.wait_for(reader.readexactly(1), timeout=10.0))[0]
+                        if features_resp == RESPONSE_FEATURE_FLAGS:
+                            server_flags = (await asyncio.wait_for(reader.readexactly(1), timeout=10.0))[0]
+                        auth_resp = (await asyncio.wait_for(reader.readexactly(1), timeout=10.0))[0]
+                        if auth_resp != RESPONSE_REQUEST_SHA256_AUTH:
+                            break
+                    except Exception as err:
+                        _LOGGER.error("Failed reconnecting to %s for password retry: %s", host, err)
+                        return False
+
+                # Read 64 hex bytes nonce
+                nonce_bytes = await asyncio.wait_for(reader.readexactly(64), timeout=10.0)
+                nonce = nonce_bytes.decode("ascii")
+                # Generate client nonce (64 hex characters)
+                cnonce = hashlib.sha256(secrets.token_bytes(32)).hexdigest()
+                # Calculate SHA256(password + nonce + cnonce)
+                to_hash = candidate_pass.encode("utf-8") + nonce.encode("ascii") + cnonce.encode("ascii")
+                resp_hash = hashlib.sha256(to_hash).hexdigest()
+                # Send cnonce + resp_hash (128 bytes total)
+                writer.write(cnonce.encode("ascii") + resp_hash.encode("ascii"))
+                await writer.drain()
+                # Server sends verification response
+                auth_resp = (await asyncio.wait_for(reader.readexactly(1), timeout=10.0))[0]
+                if auth_resp == RESPONSE_AUTH_OK:
+                    passed_auth = True
+                    if candidate_pass == "PLACEHOLDER_OTA_PASSWORD_32B____" and candidate_pass != ota_password:
+                        _LOGGER.warning(
+                            "Device at %s authenticated using placeholder fallback OTA password; self-healing in progress",
+                            host,
+                        )
+                    break
+
+            if not passed_auth or auth_resp != RESPONSE_AUTH_OK:
+                err_desc = ERROR_MESSAGES.get(auth_resp, f"Auth code 0x{auth_resp:02X}")
+                _LOGGER.error("Authentication rejected on %s: %s", host, err_desc)
                 return False
-            # Read 64 hex bytes nonce
-            nonce_bytes = await asyncio.wait_for(reader.readexactly(64), timeout=10.0)
-            nonce = nonce_bytes.decode("ascii")
-            # Generate client nonce (64 hex characters)
-            cnonce = hashlib.sha256(secrets.token_bytes(32)).hexdigest()
-            # Calculate SHA256(password + nonce + cnonce)
-            to_hash = ota_password.encode("utf-8") + nonce.encode("ascii") + cnonce.encode("ascii")
-            resp_hash = hashlib.sha256(to_hash).hexdigest()
-            # Send cnonce + resp_hash (128 bytes total)
-            writer.write(cnonce.encode("ascii") + resp_hash.encode("ascii"))
-            await writer.drain()
-            # Server sends verification response
-            auth_resp = (await asyncio.wait_for(reader.readexactly(1), timeout=10.0))[0]
 
         if auth_resp != RESPONSE_AUTH_OK:
             err_desc = ERROR_MESSAGES.get(auth_resp, f"Auth code 0x{auth_resp:02X}")

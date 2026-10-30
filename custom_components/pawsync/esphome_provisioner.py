@@ -124,6 +124,88 @@ def write_feeder_secrets_sync(
         raise
 
 
+def read_feeder_secrets_sync(
+    config_dir_or_path: str | Path,
+    mac: str = "",
+    secrets_path: str | Path | None = None,
+) -> dict[str, str]:
+    """Read feeder secrets from secrets.yaml.
+
+    Checks:
+    1. secrets_path if explicitly provided
+    2. /config/esphome/secrets.yaml
+    3. /config/secrets.yaml
+    Extracts feeder-specific keys (feeder_<mac>_*) with fallback to unscoped keys.
+    """
+    candidate_paths: list[Path] = []
+    if secrets_path:
+        candidate_paths.append(Path(secrets_path))
+    else:
+        base_dir = Path(config_dir_or_path)
+        candidate_paths.append(base_dir / "esphome" / "secrets.yaml")
+        candidate_paths.append(base_dir / "secrets.yaml")
+
+    loaded_secrets: dict[str, Any] = {}
+    for path in candidate_paths:
+        if path.is_file():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+                    if isinstance(data, dict):
+                        loaded_secrets.update(data)
+            except Exception as err:
+                _LOGGER.warning("Could not read secrets from %s: %s", path, err)
+
+    if not loaded_secrets:
+        return {}
+
+    clean_mac = sanitize_mac(mac)
+    res: dict[str, str] = {}
+
+    # Check feeder-scoped keys first
+    if clean_mac:
+        for k in ["wifi_ssid", "wifi_password", "noise_psk", "ota_password"]:
+            scoped_k = f"feeder_{clean_mac}_{k}"
+            if scoped_k in loaded_secrets and loaded_secrets[scoped_k] is not None:
+                res[k] = str(loaded_secrets[scoped_k])
+
+    # Check unscoped fallback keys
+    fallbacks = {
+        "wifi_ssid": "wifi_ssid",
+        "wifi_password": "wifi_password",
+        "noise_psk": "api_encryption_key",
+        "ota_password": "ota_password",
+    }
+    for k, fb_k in fallbacks.items():
+        if k not in res and fb_k in loaded_secrets and loaded_secrets[fb_k] is not None:
+            res[k] = str(loaded_secrets[fb_k])
+
+    return res
+
+
+async def async_read_feeder_secrets(
+    hass_or_config_dir: Any,
+    mac: str = "",
+    secrets_path: str | Path | None = None,
+) -> dict[str, str]:
+    """Asynchronously read feeder secrets from secrets.yaml."""
+    if hasattr(hass_or_config_dir, "config") and hasattr(hass_or_config_dir.config, "config_dir"):
+        config_dir = hass_or_config_dir.config.config_dir
+    elif isinstance(hass_or_config_dir, (str, Path)):
+        config_dir = str(hass_or_config_dir)
+    else:
+        config_dir = "/config"
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None,
+        read_feeder_secrets_sync,
+        config_dir,
+        mac,
+        secrets_path,
+    )
+
+
 async def async_write_feeder_secrets(
     hass_or_config_dir: Any,
     mac: str,

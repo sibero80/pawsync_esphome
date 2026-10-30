@@ -93,3 +93,20 @@ restore_cloud_backup:
       required: false
       selector:
         text:
+
+flash_latest_firmware:
+  name: Flash Latest Firmware (with Credentials)
+  description: Flash the latest ESPHome firmware to the feeder over Port 3232, dynamically injecting Wi-Fi credentials, Noise PSK, and OTA password.
+  fields:
+    host:
+      name: Host IP Address
+      description: Feeder IP address (optional, automatically resolved if omitted).
+      required: false
+      selector:
+        text:
+    mac:
+      name: Feeder MAC Address
+      description: Feeder MAC address (optional, automatically resolved if omitted).
+      required: false
+      selector:
+        text:

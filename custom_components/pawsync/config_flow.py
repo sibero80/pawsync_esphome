@@ -47,6 +47,7 @@ from .backup_manager import save_cloud_backup
 from .esphome_provisioner import (
     async_auto_adopt_esphome,
     async_provision_esphome_yaml,
+    write_feeder_secrets_sync,
 )
 from .firmware_downloader import async_ensure_firmware_binary
 from .ota_stager import PawsyncOtaStager
@@ -566,6 +567,7 @@ class PawsyncConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             "cloud_profile": self._selected_feeder_info.get("cloud_profile"),
             CONF_FLASH_METHOD: self._flash_method,
             CONF_SSID: self._wifi_ssid,
+            CONF_WIFI_PASSWORD: self._wifi_password,
             CONF_HOST: local_ip,
             CONF_UNIT_SYSTEM: self._unit_system,
         }
@@ -696,6 +698,27 @@ class PawsyncOptionsFlowHandler(config_entries.OptionsFlow):
                         _LOGGER.error("Failed importing stock backup file: %s", err)
                         errors["stock_backup_file_path"] = "import_failed"
 
+            # Sync Wi-Fi credentials to secrets.yaml if modified
+            new_ssid = (user_input.get(CONF_SSID) or "").strip()
+            new_pass = (user_input.get(CONF_WIFI_PASSWORD) or "").strip()
+            feeder_info = self.config_entry.data.get("feeder_info", {})
+            mac = feeder_info.get("mac") or self.config_entry.data.get("mac_address") or ""
+            if (new_ssid or new_pass) and mac:
+                try:
+                    sec_dict = {}
+                    if new_ssid:
+                        sec_dict["wifi_ssid"] = new_ssid
+                    if new_pass:
+                        sec_dict["wifi_password"] = new_pass
+                    await self.hass.async_add_executor_job(
+                        write_feeder_secrets_sync,
+                        self.hass.config.config_dir,
+                        mac,
+                        sec_dict,
+                    )
+                except Exception as err:
+                    _LOGGER.warning("Could not sync updated secrets to secrets.yaml: %s", err)
+
             if not errors:
                 return self.async_create_entry(title="", data=user_input)
 
@@ -707,6 +730,14 @@ class PawsyncOptionsFlowHandler(config_entries.OptionsFlow):
         current_host = self.config_entry.options.get(
             CONF_HOST,
             self.config_entry.data.get(CONF_HOST, ""),
+        )
+        current_ssid = self.config_entry.options.get(
+            CONF_SSID,
+            self.config_entry.data.get(CONF_SSID, ""),
+        )
+        current_pass = self.config_entry.options.get(
+            CONF_WIFI_PASSWORD,
+            self.config_entry.data.get(CONF_WIFI_PASSWORD, ""),
         )
         current_port = self.config_entry.options.get("stager_port", 8099)
         current_backup_path = self.config_entry.options.get("stock_backup_file_path", "")
@@ -720,6 +751,8 @@ class PawsyncOptionsFlowHandler(config_entries.OptionsFlow):
                     }
                 ),
                 vol.Optional(CONF_HOST, default=current_host): str,
+                vol.Optional(CONF_SSID, default=current_ssid): str,
+                vol.Optional(CONF_WIFI_PASSWORD, default=current_pass): str,
                 vol.Optional("stager_port", default=current_port): vol.All(
                     vol.Coerce(int), vol.Range(min=1024, max=65535)
                 ),

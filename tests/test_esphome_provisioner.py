@@ -192,3 +192,42 @@ async def test_async_auto_adopt_esphome_existing():
     )
     assert success is True
 
+
+def test_read_feeder_secrets_sync(tmp_path):
+    """Test reading feeder-scoped and unscoped secrets."""
+    from custom_components.pawsync.esphome_provisioner import (
+        read_feeder_secrets_sync,
+        write_feeder_secrets_sync,
+    )
+
+    secrets_file = tmp_path / "secrets.yaml"
+    write_feeder_secrets_sync(
+        config_dir_or_path=tmp_path,
+        mac="94:A9:90:4C:18:D8",
+        secrets_dict={
+            "wifi_ssid": "SecretSSID",
+            "wifi_password": "SecretPassword",
+            "noise_psk": "MyFeederPSK123=",
+            "ota_password": "MyOtaPassword456",
+        },
+        secrets_path=secrets_file,
+    )
+
+    # 1. Read with matching MAC
+    secrets = read_feeder_secrets_sync(tmp_path, mac="94:A9:90:4C:18:D8", secrets_path=secrets_file)
+    assert secrets["wifi_ssid"] == "SecretSSID"
+    assert secrets["wifi_password"] == "SecretPassword"
+    assert secrets["noise_psk"] == "MyFeederPSK123="
+    assert secrets["ota_password"] == "MyOtaPassword456"
+
+    # 2. Read with different MAC falls back to unscoped keys
+    other_secrets = read_feeder_secrets_sync(tmp_path, mac="11:22:33:44:55:66", secrets_path=secrets_file)
+    assert other_secrets["wifi_ssid"] == "SecretSSID"
+    assert other_secrets["wifi_password"] == "SecretPassword"
+    assert other_secrets["noise_psk"] == "MyFeederPSK123="
+    assert other_secrets["ota_password"] == "MyOtaPassword456"
+
+    # 3. Non-existent file returns empty dict
+    non_existent = read_feeder_secrets_sync(tmp_path / "non_existent", mac="11:22:33")
+    assert non_existent == {}
+

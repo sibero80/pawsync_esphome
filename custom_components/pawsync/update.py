@@ -26,10 +26,19 @@ from .backup_manager import (
     async_check_device_backup_status,
     has_valid_local_backup,
 )
-from .const import CONF_HOST, CONF_SELECTED_FEEDER, DOMAIN, VERSION, generate_noise_psk
+from .const import (
+    CONF_HOST,
+    CONF_SELECTED_FEEDER,
+    CONF_SSID,
+    CONF_WIFI_PASSWORD,
+    DOMAIN,
+    VERSION,
+    generate_noise_psk,
+)
 from .espota_client import async_flash_esphome_ota, sanitize_firmware_binary
-from .esphome_provisioner import resolve_arp_ip
+from .esphome_provisioner import read_feeder_secrets_sync, resolve_arp_ip
 from .firmware_downloader import async_ensure_firmware_binary
+from .firmware_patcher import patch_raw_esp32_credentials
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -98,13 +107,7 @@ class PawSyncFirmwareUpdateEntity(UpdateEntity):
         if self._installed_version:
             return self._installed_version
 
-        # 1. Check if an explicit installed version was saved in entry data/options
-        saved_ver = self._entry.data.get("installed_firmware_version")
-        if saved_ver:
-            self._installed_version = str(saved_ver).lstrip("v")
-            return self._installed_version
-
-        # 2. Check ESPHome config entries for the matched device
+        # 1. Check live ESPHome config entries for the matched device
         clean_mac = (self._mac or "").replace(":", "").replace("-", "").strip().lower()
         for esphome_entry in self.hass.config_entries.async_entries("esphome"):
             entry_mac = (esphome_entry.unique_id or "").replace(":", "").replace("-", "").strip().lower()
@@ -117,6 +120,12 @@ class PawSyncFirmwareUpdateEntity(UpdateEntity):
                         if proj_ver:
                             self._installed_version = str(proj_ver).lstrip("v")
                             return self._installed_version
+
+        # 2. Check if an explicit installed version was saved in entry data/options
+        saved_ver = self._entry.data.get("installed_firmware_version")
+        if saved_ver:
+            self._installed_version = str(saved_ver).lstrip("v")
+            return self._installed_version
 
         # 3. Check Device Registry
         dev_reg = dr.async_get(self.hass)
@@ -246,8 +255,62 @@ class PawSyncFirmwareUpdateEntity(UpdateEntity):
                 self._attr_update_percentage = int(pct * 100)
                 self.async_write_ha_state()
 
-            device_noise_psk = self._entry.data.get("noise_psk") or generate_noise_psk()
-            device_ota_password = self._entry.data.get("ota_password")
+            # 4. Resolve credentials to preserve across OTA
+            hass_config_dir = (
+                self.hass.config.config_dir
+                if hasattr(self.hass, "config") and hasattr(self.hass.config, "config_dir")
+                else "/config"
+            )
+            secrets = await self.hass.async_add_executor_job(
+                read_feeder_secrets_sync, hass_config_dir, self._mac
+            )
+
+            device_noise_psk = (
+                self._entry.data.get("noise_psk")
+                or self._entry.options.get("noise_psk")
+                or secrets.get("noise_psk")
+                or generate_noise_psk()
+            )
+            device_ota_password = (
+                self._entry.data.get("ota_password")
+                or self._entry.options.get("ota_password")
+                or secrets.get("ota_password")
+            )
+            wifi_ssid = (
+                self._entry.data.get(CONF_SSID)
+                or self._entry.options.get(CONF_SSID)
+                or self._entry.data.get("wifi_ssid")
+                or secrets.get("wifi_ssid")
+                or ""
+            )
+            wifi_password = (
+                self._entry.data.get(CONF_WIFI_PASSWORD)
+                or self._entry.options.get(CONF_WIFI_PASSWORD)
+                or self._entry.data.get("wifi_password")
+                or secrets.get("wifi_password")
+                or ""
+            )
+
+            # 5. Dynamically inject credentials into firmware binary
+            if wifi_ssid or device_noise_psk or device_ota_password:
+                def _patch(bin_bytes: bytes) -> bytes:
+                    return patch_raw_esp32_credentials(
+                        bin_bytes,
+                        ssid=wifi_ssid,
+                        password=wifi_password,
+                        noise_psk=device_noise_psk,
+                        ota_password=device_ota_password,
+                    )
+
+                firmware_binary = await self.hass.async_add_executor_job(_patch, firmware_binary)
+                _LOGGER.info(
+                    "Injected credentials into update binary for %s: SSID '%s', Noise PSK (%s), OTA pass (%s)",
+                    self._name,
+                    wifi_ssid,
+                    "present" if device_noise_psk else "none",
+                    "present" if device_ota_password else "none",
+                )
+
             success = await async_flash_esphome_ota(
                 host=host,
                 firmware_binary=firmware_binary,
@@ -261,10 +324,18 @@ class PawSyncFirmwareUpdateEntity(UpdateEntity):
                     f"ESPHome OTA upload to {host} failed. Ensure feeder is online and check Home Assistant logs for details."
                 )
 
-            # Mark version as updated
+            # Mark version as updated and persist resolved credentials in entry data
             self._installed_version = self.latest_version
             new_data = dict(self._entry.data)
             new_data["installed_firmware_version"] = self.latest_version
+            if device_noise_psk and new_data.get("noise_psk") != device_noise_psk:
+                new_data["noise_psk"] = device_noise_psk
+            if device_ota_password and new_data.get("ota_password") != device_ota_password:
+                new_data["ota_password"] = device_ota_password
+            if wifi_ssid and new_data.get(CONF_SSID) != wifi_ssid:
+                new_data[CONF_SSID] = wifi_ssid
+            if wifi_password and new_data.get(CONF_WIFI_PASSWORD) != wifi_password:
+                new_data[CONF_WIFI_PASSWORD] = wifi_password
             self.hass.config_entries.async_update_entry(self._entry, data=new_data)
 
             # Update Device Registry

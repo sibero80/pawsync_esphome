@@ -2,7 +2,7 @@
 
 DOMAIN = "pawsync"
 NAME = "Pawsync Smart Pet Feeder"
-VERSION = "1.5.0"
+VERSION = "1.5.1"
 
 # Cloud API Endpoints
 PAWSYNC_API_BASE = "https://smartapi.pawsync.com"
@@ -34,7 +34,7 @@ FLASH_METHOD_SKIP = "manual_skip"
 # Frontend / Card
 CARD_FILENAME = "pawsync-feeder-card.js"
 CARD_URL_PATH = "/pawsync/pawsync-feeder-card.js"
-CARD_VERSION = "1.5.0"
+CARD_VERSION = "1.5.1"
 
 # Unit System Preferences
 CONF_UNIT_SYSTEM = "unit_system"

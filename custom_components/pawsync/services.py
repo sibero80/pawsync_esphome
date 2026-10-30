@@ -22,6 +22,7 @@ SERVICE_TARE_SCALE = "tare_scale"
 SERVICE_CALIBRATE = "calibrate_portion"
 SERVICE_RESTORE_STOCK = "restore_stock_firmware"
 SERVICE_RESTORE_CLOUD_BACKUP = "restore_cloud_backup"
+SERVICE_FLASH_LATEST_FIRMWARE = "flash_latest_firmware"
 
 FEED_SCHEMA = vol.Schema(
     {
@@ -55,6 +56,13 @@ RESTORE_CLOUD_BACKUP_SCHEMA = vol.Schema(
     {
         vol.Optional("mac"): cv.string,
         vol.Optional("entry_id"): cv.string,
+    }
+)
+
+FLASH_LATEST_FIRMWARE_SCHEMA = vol.Schema(
+    {
+        vol.Optional("host"): cv.string,
+        vol.Optional("mac"): cv.string,
     }
 )
 
@@ -223,6 +231,37 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             raise HomeAssistantError(f"Cloud settings restoration failed for {matched_entry.title}")
         _LOGGER.info("Restored cloud backup settings for %s", matched_entry.title)
 
+    async def async_handle_flash_latest_firmware(call: ServiceCall) -> None:
+        """Handle on-demand flashing of latest firmware with patched credentials."""
+        host = call.data.get("host")
+        mac = call.data.get("mac")
+
+        matched_entry = None
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            feeder_info = entry.data.get("feeder_info", {})
+            entry_mac = (feeder_info.get("mac") or entry.data.get("mac_address") or "").replace(":", "").replace("-", "").lower()
+            clean_mac = (mac or "").replace(":", "").replace("-", "").lower()
+            entry_host = entry.data.get(CONF_HOST) or feeder_info.get("ip")
+            if (clean_mac and entry_mac == clean_mac) or (host and entry_host == host):
+                matched_entry = entry
+                break
+
+        if not matched_entry:
+            entries = hass.config_entries.async_entries(DOMAIN)
+            if len(entries) == 1:
+                matched_entry = entries[0]
+            elif len(entries) > 1 and not host and not mac:
+                raise HomeAssistantError("Multiple feeders configured; please specify 'host' or 'mac'.")
+            else:
+                raise HomeAssistantError("Could not resolve target PawSync feeder.")
+
+        from .update import PawSyncFirmwareUpdateEntity
+        entity = PawSyncFirmwareUpdateEntity(hass, matched_entry)
+        if host:
+            entity._host = host
+        await entity.async_install()
+        _LOGGER.info("Successfully executed flash_latest_firmware service for %s", entity._name)
+
     if not hass.services.has_service(DOMAIN, SERVICE_FEED):
         hass.services.async_register(DOMAIN, SERVICE_FEED, async_handle_feed, schema=FEED_SCHEMA)
 
@@ -241,4 +280,12 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             SERVICE_RESTORE_CLOUD_BACKUP,
             async_handle_restore_cloud_backup,
             schema=RESTORE_CLOUD_BACKUP_SCHEMA,
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_FLASH_LATEST_FIRMWARE):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_FLASH_LATEST_FIRMWARE,
+            async_handle_flash_latest_firmware,
+            schema=FLASH_LATEST_FIRMWARE_SCHEMA,
         )
