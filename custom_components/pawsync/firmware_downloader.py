@@ -29,6 +29,7 @@ CONTAINER_MAGIC_BYTE = 0x01
 
 # Pinned release digests: maps release tag / version to expected sha256 hex digest
 EXPECTED_FIRMWARE_DIGESTS: dict[str, str] = {
+    "1.5.2": "d499f27d636d2be95cc078c9b87f2e04d13c8b5074d86f954fdb293fd4730164",
     "1.5.1": "d499f27d636d2be95cc078c9b87f2e04d13c8b5074d86f954fdb293fd4730164",
     "1.5.0": "d499f27d636d2be95cc078c9b87f2e04d13c8b5074d86f954fdb293fd4730164",
     "1.5.0-beta": "d499f27d636d2be95cc078c9b87f2e04d13c8b5074d86f954fdb293fd4730164",
